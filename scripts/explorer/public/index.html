@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#fafbf9" />
+    <title>NSE / BSE API Explorer</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/icons.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <i data-lucide="chart-no-axes-combined"></i
+        ><span
+          >NSE <span class="slash">/</span> BSE
+          <span class="brand-sub">API Explorer</span></span
+        >
+      </div>
+      <div class="connection">
+        <span class="dot"></span> LOCAL <span class="version">v0.1.3</span>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="sidebar-heading">
+          <h2>Endpoints</h2>
+          <span id="endpoint-count" class="count">0</span>
+        </div>
+        <div class="search">
+          <i data-lucide="search"></i
+          ><input
+            id="search"
+            type="search"
+            placeholder="Search endpoints"
+            aria-label="Search endpoints"
+          />
+        </div>
+        <div class="segments" role="group" aria-label="Exchange filter">
+          <button type="button" data-exchange="All" aria-pressed="true">
+            All
+          </button>
+          <button type="button" data-exchange="NSE" aria-pressed="false">
+            NSE
+          </button>
+          <button type="button" data-exchange="BSE" aria-pressed="false">
+            BSE
+          </button>
+        </div>
+        <nav id="endpoints" aria-label="Endpoints">
+          <p class="muted">Loading endpoints...</p>
+        </nav>
+        <section class="recent">
+          <div class="sidebar-heading">
+            <h2>Recent Requests</h2>
+            <button
+              id="clear-history"
+              class="icon-button"
+              type="button"
+              title="Clear recent requests"
+              aria-label="Clear recent requests"
+            >
+              <i data-lucide="trash-2"></i>
+            </button>
+          </div>
+          <div id="history"><p class="muted">No requests yet</p></div>
+        </section>
+        <div class="sidebar-footer">
+          <span class="dot"></span> nse-bse-api <span>Node.js</span>
+        </div>
+      </aside>
+      <main>
+        <div class="breadcrumb">
+          WORKSPACE <span>/</span> <span id="breadcrumb-exchange">NSE</span>
+          <span>/</span> <span id="breadcrumb-group">Equity</span>
+        </div>
+        <header class="endpoint-header">
+          <div>
+            <div class="eyebrow">
+              <span id="exchange-badge" class="exchange-badge">NSE</span
+              ><span id="group-label">Equity</span>
+            </div>
+            <h1 id="endpoint-title">Equity quote</h1>
+            <code id="method-name">nse.equityQuote()</code>
+          </div>
+          <div class="latency-visual">
+            <span>REQUEST LATENCY</span
+            ><canvas
+              id="latency-chart"
+              width="160"
+              height="48"
+              aria-label="Recent request latency chart"
+              role="img"
+            ></canvas>
+          </div>
+        </header>
+        <section class="request-section" aria-labelledby="request-heading">
+          <div class="section-heading">
+            <h2 id="request-heading">
+              <span class="section-number">01</span> Request
+            </h2>
+            <span class="method-label"
+              >POST <code id="request-path">/api/run/nse-quote</code></span
+            >
+          </div>
+          <form id="request-form">
+            <div id="fields" class="fields"></div>
+            <div class="execute-row">
+              <button
+                id="execute"
+                class="execute-button"
+                type="submit"
+                disabled
+              >
+                <i data-lucide="play"></i><span>Execute Request</span></button
+              ><button id="reset" class="text-button" type="button">
+                Reset</button
+              ><span id="request-state" class="muted" role="status"></span>
+            </div>
+          </form>
+          <div class="code-preview">
+            <div class="code-toolbar">
+              <div class="tabs" role="group" aria-label="Request preview">
+                <button
+                  type="button"
+                  data-preview="javascript"
+                  aria-pressed="true"
+                >
+                  JavaScript</button
+                ><button type="button" data-preview="curl" aria-pressed="false">
+                  cURL
+                </button>
+              </div>
+              <button
+                id="copy-request"
+                type="button"
+                class="icon-button"
+                title="Copy request"
+                aria-label="Copy request"
+              >
+                <i data-lucide="copy"></i>
+              </button>
+            </div>
+            <pre id="request-code"></pre>
+          </div>
+        </section>
+        <section class="response-section" aria-labelledby="response-heading">
+          <div class="section-heading">
+            <h2 id="response-heading">
+              <span class="section-number">02</span> Response
+            </h2>
+            <div id="response-meta" class="response-meta"></div>
+          </div>
+          <div class="response-toolbar">
+            <div class="tabs" role="group" aria-label="Response view">
+              <button type="button" data-view="json" aria-pressed="true">
+                JSON</button
+              ><button
+                type="button"
+                data-view="table"
+                aria-pressed="false"
+                disabled
+              >
+                Table
+              </button>
+            </div>
+            <div class="response-actions">
+              <span id="row-count" class="muted"></span
+              ><button
+                id="copy-response"
+                class="icon-button"
+                type="button"
+                title="Copy response"
+                aria-label="Copy response"
+                disabled
+              >
+                <i data-lucide="copy"></i></button
+              ><button
+                id="download-response"
+                class="icon-button"
+                type="button"
+                title="Download JSON"
+                aria-label="Download JSON"
+                disabled
+              >
+                <i data-lucide="download"></i>
+              </button>
+            </div>
+          </div>
+          <div id="response-body" class="response-body">
+            <div class="empty-state">
+              <i data-lucide="braces"></i>
+              <h3>No response yet</h3>
+              <span class="muted">&mdash;</span>
+            </div>
+          </div>
+        </section>
+        <footer class="main-footer">
+          <span>Unofficial exchange APIs</span
+          ><span>NSE India <span class="separator">/</span> BSE India</span>
+        </footer>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>

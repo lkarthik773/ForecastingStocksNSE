@@ -6,6 +6,9 @@ import { HttpClient } from "../http/http-client.js";
 import { EquityApi } from "../api/equity-api.js";
 import { OptionsApi } from "../api/options-api.js";
 import { HistoricalApi } from "../api/historical-api.js";
+import { ForecastApi, type ForecastParams } from "../api/forecast-api.js";
+import { ForecastContextApi } from "../api/forecast-context-api.js";
+import { FinBertScorer } from "../api/finbert.js";
 import { CorporateApi } from "../api/corporate-api.js";
 import { IpoApi } from "../api/ipo-api.js";
 import { MarketApi } from "../api/market-api.js";
@@ -38,6 +41,7 @@ export class NSEClient {
   public readonly equity: EquityApi;
   public readonly options: OptionsApi;
   public readonly historical: HistoricalApi;
+  public readonly forecast: ForecastApi;
   public readonly corporate: CorporateApi;
   public readonly ipo: IpoApi;
   public readonly market: MarketApi;
@@ -55,6 +59,8 @@ export class NSEClient {
     this.equity = new EquityApi(this.httpClient);
     this.options = new OptionsApi(this.httpClient);
     this.historical = new HistoricalApi(this.httpClient);
+    const scorer = new FinBertScorer(opts.forecastContext === false ? undefined : opts.forecastContext?.finbertCacheDir);
+    this.forecast = new ForecastApi(this.historical, undefined, opts.forecastContext === false ? undefined : new ForecastContextApi(this.historical, { ...opts.forecastContext, newsArchivePath: opts.forecastTraining?.newsArchivePath ?? opts.forecastContext?.newsArchivePath }, undefined, scorer), { newsArchivePath: opts.forecastTraining?.newsArchivePath, scorer });
     this.corporate = new CorporateApi(this.httpClient);
     this.ipo = new IpoApi(this.httpClient);
     this.market = new MarketApi(this.httpClient);
@@ -129,6 +135,7 @@ export class NSEClient {
   static maxpainV3(optionChain: any, expiry: string) { return OptionsApi.calculateMaxPainV3(optionChain, expiry); }
 
   async fetch_equity_historical_data(params: any) { return this.historical.fetchEquityHistoricalData(params); }
+  async forecastStock(params: ForecastParams) { return this.forecast.forecastStock(params); }
   async fetch_historical_vix_data(params: any = {}) { return this.historical.fetchHistoricalVixData(params); }
   async fetch_historical_fno_data(params: any) { return this.historical.fetchHistoricalFnoData(params); }
   async fetch_fno_underlying() { return this.historical.fetchFnoUnderlying(); }

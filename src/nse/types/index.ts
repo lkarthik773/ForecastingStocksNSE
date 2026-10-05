@@ -15,6 +15,8 @@ export type QuoteSection = "trade_info";
 export interface NSEOptions {
   server?: boolean;
   timeout?: number;
+  forecastContext?: { finbertCacheDir?: string; newsArchivePath?: string } | false;
+  forecastTraining?: { newsArchivePath?: string };
 }
 
 export interface ActionParams {

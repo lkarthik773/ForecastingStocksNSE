@@ -11,6 +11,9 @@ export { BSE } from './bse/index.js';
 
 // Named exports for specific usage
 export { NSEClient } from './nse/index.js';
+export type { ForecastParams, ForecastResult, ForecastPoint, ForecastDirection } from './nse/index.js';
+export type { FinBertScore, SentimentScorer, TrainedForecast, TrainingObservation, TrainingSentiment } from './nse/index.js';
+export type { ForecastContext, ForecastContextOptions, ForecastContextProvider, ContextRequest, NewsArticle, MarketObservation } from './nse/index.js';
 
 // Export namespaced APIs to avoid conflicts
 export * as NSEApi from './nse/index.js';
