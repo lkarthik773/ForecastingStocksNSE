@@ -37,7 +37,8 @@ and add a dated checkpoint after a substantial feature or architecture change.
   or `EXPLORER_PUBLIC_ORIGIN`, binds to all interfaces, and enforces the exact
   public host/origin. Local-only behavior remains the default. `/health` is
   available without exchange calls. This is still an unauthenticated developer
-  tool; the Render Blueprint does not install Python LightGBM.
+  tool. The Render build now creates the default Linux LightGBM virtual
+  environment, installs its dependencies, and checks imports before deployment.
 
 The older two-year lookback, EODHD API token settings, provider news-symbol
 filter, and random-forest descriptions are superseded, not current behavior.

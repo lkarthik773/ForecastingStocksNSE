@@ -114,7 +114,7 @@ or these settings on an existing Render Node web service:
 
 | Setting | Value |
 | --- | --- |
-| Build command | `npm ci --include=dev && npm run build` |
+| Build command | `npm ci --include=dev && npm run build && python3 -m venv node_modules/.cache/lightgbm/venv && node_modules/.cache/lightgbm/venv/bin/python -m pip install -r scripts/lightgbm-requirements.txt && node_modules/.cache/lightgbm/venv/bin/python -c "import lightgbm, numpy, sklearn; print('LightGBM', lightgbm.__version__)"` |
 | Start command | `npm start` |
 | Health check path | `/health` |
 | `NODE_VERSION` | `22` |
@@ -137,11 +137,16 @@ Hosted mode exposes an unauthenticated developer tool, not a hardened production
 API. Same-origin checks are not authentication: non-browser clients can still
 call its operations. Restrict access before using it for a private service.
 Exchange sites may block cloud IP addresses even when the service is healthy.
-Technical forecasts additionally need a Linux Python environment with
-`scripts/lightgbm-requirements.txt` installed and `LIGHTGBM_PYTHON` set to that
-interpreter; the Windows `setup:lightgbm` command does not run on Render. Use
-`model: baseline` when Python LightGBM is not installed. FinBERT also requires
-its optional runtime and a configured local news archive.
+The build creates the Linux Python environment at the runtime's default path,
+`node_modules/.cache/lightgbm/venv`, installs `scripts/lightgbm-requirements.txt`,
+and verifies the imports. Leave `LIGHTGBM_PYTHON` unset to use this environment;
+an existing override must point to a valid Linux interpreter. The Windows
+`setup:lightgbm` command does not run on Render. Existing manually configured
+services must update their dashboard build command and redeploy; editing the
+Blueprint alone does not update them. If `python3`, venv support, or LightGBM
+system libraries are unavailable, use a Docker runtime with those prerequisites
+installed. Use `model: baseline` when Python LightGBM is not installed. FinBERT
+also requires its optional runtime and a configured local news archive.
 
 ### Stock Forecast (Experimental, NSE)
 

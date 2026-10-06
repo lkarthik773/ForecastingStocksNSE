@@ -17,11 +17,15 @@ Status: implemented in the shared working tree; not committed or deployed.
   without trusting arbitrary forwarded headers. They are not authentication.
 - `GET /health` is a host-independent process check with no exchange calls.
 - A Render Blueprint and manual deployment settings use npm and retain dev
-  dependencies required for tsx and browser icons. Python LightGBM installation,
-  access control, and exchange cloud-IP restrictions remain separate concerns.
+  dependencies required for tsx and browser icons. The build now creates the
+  default Linux LightGBM virtual environment and verifies dependency imports.
+  Existing manual services need the dashboard build command updated. Access
+  control and exchange cloud-IP restrictions remain separate concerns.
 
 ## Verification
 
 - `npm run test:explorer`: 13 tests passed, covering hosted pages, catalogue,
   API calls, health checks, rejected hosts/origins, and local-only defaults.
 - Actual Render deployment and live cloud exchange access are not verified.
+- LightGBM build configuration passes local YAML parsing and command assertions;
+  Linux Python installation and import verification still require a Render build.

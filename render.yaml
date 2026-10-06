@@ -2,7 +2,11 @@ services:
   - type: web
     name: nse-bse-api-explorer
     runtime: node
-    buildCommand: npm ci --include=dev && npm run build
+    buildCommand: >-
+      npm ci --include=dev && npm run build &&
+      python3 -m venv node_modules/.cache/lightgbm/venv &&
+      node_modules/.cache/lightgbm/venv/bin/python -m pip install -r scripts/lightgbm-requirements.txt &&
+      node_modules/.cache/lightgbm/venv/bin/python -c "import lightgbm, numpy, sklearn; print('LightGBM', lightgbm.__version__)"
     startCommand: npm start
     healthCheckPath: /health
     envVars:
