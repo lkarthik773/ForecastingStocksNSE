@@ -1,4 +1,4 @@
-import type { HistoricalApi } from './historical-api.js';
+import type { HistoricalApi } from '../nse/api/historical-api.js';
 import {
   trainForecast,
   type TrainedForecast,

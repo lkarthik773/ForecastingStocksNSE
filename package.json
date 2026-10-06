@@ -34,15 +34,28 @@
       "import": "./dist/bse/index.js",
       "require": "./dist-cjs/bse/index.js",
       "types": "./dist/bse/index.d.ts"
+    },
+    "./forecast": {
+      "types": "./dist/forecast/index.d.ts",
+      "import": "./dist/forecast/index.js",
+      "require": "./dist-cjs/forecast/index.js"
+    },
+    "./kite": {
+      "types": "./dist/kite/index.d.ts",
+      "import": "./dist/kite/index.js",
+      "require": "./dist-cjs/kite/index.js"
     }
   },
   "scripts": {
-    "start": "tsx scripts/explorer/server.ts",
-    "setup:lightgbm": "powershell -NoProfile -File scripts/setup-lightgbm.ps1",
-    "explorer": "tsx scripts/explorer/server.ts",
-    "test:explorer": "vitest run tests/explorer.test.ts",
-    "test:forecast": "vitest run tests/nse/forecast.test.ts tests/nse/forecast-context.test.ts tests/nse/finbert.test.ts tests/nse/trained-forecast.test.ts tests/nse/walk-forward.test.ts tests/explorer.test.ts",
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node scripts/postbuild-cjs.js",
+    "start": "tsx apps/explorer/server.ts",
+    "start:kite": "tsx apps/kite/server.ts",
+    "test:kite": "vitest run tests/kite/kiteintegration.test.ts",
+    "typecheck:kite": "tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --esModuleInterop --skipLibCheck apps/kite/server.ts tests/kite/kiteintegration.test.ts",
+    "setup:lightgbm": "powershell -NoProfile -File scripts/forecast/setup-lightgbm.ps1",
+    "explorer": "tsx apps/explorer/server.ts",
+    "test:explorer": "vitest run tests/apps/explorer.test.ts",
+    "test:forecast": "vitest run tests/forecast/forecast.test.ts tests/forecast/forecast-context.test.ts tests/forecast/finbert.test.ts tests/forecast/trained-forecast.test.ts tests/forecast/walk-forward.test.ts tests/apps/explorer.test.ts",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.cjs.json && node scripts/build/postbuild-cjs.js",
     "clean": "rimraf dist dist-cjs",
     "lint": "eslint 'src/**/*.ts'",
     "test": "vitest run",
@@ -81,8 +94,10 @@
     "adm-zip": "^0.5.16",
     "axios": "^1.7.7",
     "axios-cookiejar-support": "^6.0.2",
+    "dotenv": "^18.0.5",
     "got": "^12.6.1",
     "node-html-parser": "^6.1.10",
+    "swagger-ui-dist": "^5.33.1",
     "technicalindicators": "^3.1.0",
     "tough-cookie": "^4.1.3"
   },

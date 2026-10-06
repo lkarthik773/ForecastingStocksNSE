@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { request } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { NSE, BSE } from '../src/index.js';
-import { createEndpoints, validateParams } from '../scripts/explorer/api.js';
-import { createExplorerServer } from '../scripts/explorer/server.js';
+import type { NSE, BSE } from '../../src/index.js';
+import { createEndpoints, validateParams } from '../../apps/explorer/api.js';
+import { createExplorerServer } from '../../apps/explorer/server.js';
 import {
   ForecastApi,
   ForecastInputError,
-} from '../src/nse/api/forecast-api.js';
+} from '../../src/forecast/forecast-api.js';
 
 const quote = vi.fn().mockResolvedValue({ price: 123 });
 const forecastStock = vi.fn().mockResolvedValue({

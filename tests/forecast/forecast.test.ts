@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ForecastApi } from '../../src/nse/api/forecast-api.js';
-import type { ForecastContext } from '../../src/nse/api/forecast-context-api.js';
+import { ForecastApi } from '../../src/forecast/index.js';
+import { ForecastApi as NseForecastApi } from '../../src/nse/index.js';
+import type { ForecastContext } from '../../src/forecast/forecast-context-api.js';
 
 const NOW = new Date('2026-10-05T06:00:00Z');
 function history(drift = 0.001, noise = 0) {
@@ -29,6 +30,10 @@ function setup(rows = history()) {
 }
 
 describe('stock forecast', () => {
+  it('preserves the existing NSE forecast export after module separation', () => {
+    expect(NseForecastApi).toBe(ForecastApi);
+  });
+
   it('runs the three-year LightGBM API with the requested rolling fold schedule', async () => {
     const result = await setup().api.forecastStock({
       symbol: 'TCS',

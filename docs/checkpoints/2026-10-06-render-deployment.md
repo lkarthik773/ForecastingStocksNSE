@@ -2,7 +2,7 @@
 
 Date: 2026-10-06
 
-Living context: [Development Context](../DEVELOPMENT_CONTEXT.md).
+Living context: [Development Context](../development/CONTEXT.md).
 Status: implemented in the shared working tree; not committed or deployed.
 
 ## Change

@@ -1,6 +1,6 @@
 # Development Context
 
-Last checkpoint: [2026-10-06 - Render Explorer Deployment](checkpoints/2026-10-06-render-deployment.md).
+Last checkpoint: [2026-10-06 - Repository Modules](../checkpoints/2026-10-06-repository-modules.md).
 
 This is the living handoff document for subsequent development. Read it and the
 latest checkpoint before changing the explorer or forecasting code. The source
@@ -11,9 +11,16 @@ and add a dated checkpoint after a substantial feature or architecture change.
 
 - Repository: `nse-bse-api`, version `0.1.3`, TypeScript, Node.js >=18.
 - Separate unofficial NSE and BSE clients; exported together through
-  [src/index.ts](src/index.ts).
+  [../../src/index.ts](../../src/index.ts).
 - ESM and CommonJS builds, TypeScript declarations, and Vitest tests.
+- Domain code: `src/nse`, `src/bse`, `src/forecast`, `src/kite`. HTTP entry
+  points/assets: `apps/explorer`, `apps/kite`. Tests mirror these boundaries.
+- Tooling: `scripts/build`, `scripts/forecast`; configuration placeholders:
+  `config/examples`. Local `.env.kite` and caches remain unmoved and ignored.
+- Existing package exports and npm commands are preserved; new `/forecast` and
+  `/kite` package entries expose module cores, not HTTP servers.
 - Windows is the current development environment; use PowerShell syntax.
+- Separate read-only Kite feature handoff: [../kite/CONTEXT.md](../kite/CONTEXT.md).
 - Existing modifications are uncommitted. Preserve user changes and do not
   reset, clean, commit, or change branches without an explicit request.
 
@@ -154,23 +161,23 @@ overlapping targets mean 95% coverage is not guaranteed.
 
 | Surface | Owning File |
 | --- | --- |
-| Library exports | [src/index.ts](src/index.ts) |
-| NSE orchestration | [src/nse/nse/nse-client.ts](src/nse/nse/nse-client.ts) |
-| Historical NSE fetch/pagination | [src/nse/api/historical-api.ts](src/nse/api/historical-api.ts) |
-| Input validation, history cutoffs, result assembly | [src/nse/api/forecast-api.ts](src/nse/api/forecast-api.ts) |
-| Indicators, tasks, OOS metrics and metadata | [src/nse/api/trained-forecast.ts](src/nse/api/trained-forecast.ts) |
-| Calendar folds and boundary purging | [src/nse/api/walk-forward.ts](src/nse/api/walk-forward.ts) |
-| Async official LightGBM subprocess bridge | [src/nse/api/lightgbm.ts](src/nse/api/lightgbm.ts) |
-| Free market and local-archive context | [src/nse/api/forecast-context-api.ts](src/nse/api/forecast-context-api.ts) |
-| Local sentiment inference/cache | [src/nse/api/finbert.ts](src/nse/api/finbert.ts) |
-| Archive loading and historical sentiment features | [src/nse/api/finbert-history.ts](src/nse/api/finbert-history.ts) |
-| Local HTTP bridge and environment configuration | [scripts/explorer/server.ts](scripts/explorer/server.ts) |
-| Allowlisted endpoint schemas | [scripts/explorer/api.ts](scripts/explorer/api.ts) |
-| Explorer interactions and rendering | [scripts/explorer/public/app.js](scripts/explorer/public/app.js) |
-| Explorer markup/styles | [scripts/explorer/public/index.html](scripts/explorer/public/index.html), [scripts/explorer/public/styles.css](scripts/explorer/public/styles.css) |
-| Windows Python setup | [scripts/setup-lightgbm.ps1](scripts/setup-lightgbm.ps1) |
-| Python requirements | [scripts/lightgbm-requirements.txt](scripts/lightgbm-requirements.txt) |
-| User-facing usage | [README.md](README.md) |
+| Library exports | [../../src/index.ts](../../src/index.ts) |
+| NSE orchestration | [../../src/nse/client/nse-client.ts](../../src/nse/client/nse-client.ts) |
+| Historical NSE fetch/pagination | [../../src/nse/api/historical-api.ts](../../src/nse/api/historical-api.ts) |
+| Input validation, history cutoffs, result assembly | [../../src/forecast/forecast-api.ts](../../src/forecast/forecast-api.ts) |
+| Indicators, tasks, OOS metrics and metadata | [../../src/forecast/trained-forecast.ts](../../src/forecast/trained-forecast.ts) |
+| Calendar folds and boundary purging | [../../src/forecast/walk-forward.ts](../../src/forecast/walk-forward.ts) |
+| Async official LightGBM subprocess bridge | [../../src/forecast/lightgbm.ts](../../src/forecast/lightgbm.ts) |
+| Free market and local-archive context | [../../src/forecast/forecast-context-api.ts](../../src/forecast/forecast-context-api.ts) |
+| Local sentiment inference/cache | [../../src/forecast/finbert.ts](../../src/forecast/finbert.ts) |
+| Archive loading and historical sentiment features | [../../src/forecast/finbert-history.ts](../../src/forecast/finbert-history.ts) |
+| Local HTTP bridge and environment configuration | [../../apps/explorer/server.ts](../../apps/explorer/server.ts) |
+| Allowlisted endpoint schemas | [../../apps/explorer/api.ts](../../apps/explorer/api.ts) |
+| Explorer interactions and rendering | [../../apps/explorer/public/app.js](../../apps/explorer/public/app.js) |
+| Explorer markup/styles | [../../apps/explorer/public/index.html](../../apps/explorer/public/index.html), [../../apps/explorer/public/styles.css](../../apps/explorer/public/styles.css) |
+| Windows Python setup | [../../scripts/forecast/setup-lightgbm.ps1](../../scripts/forecast/setup-lightgbm.ps1) |
+| Python requirements | [../../scripts/forecast/lightgbm-requirements.txt](../../scripts/forecast/lightgbm-requirements.txt) |
+| User-facing usage | [../../README.md](../../README.md) |
 
 ## Setup And Verification
 

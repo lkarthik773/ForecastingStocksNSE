@@ -2,7 +2,7 @@
 
 Date: 2026-10-05
 
-Living context: [Development Context](../DEVELOPMENT_CONTEXT.md).
+Living context: [Development Context](../development/CONTEXT.md).
 Status: implemented in the shared working tree; not committed or released.
 
 ## Change
@@ -26,7 +26,7 @@ forecasting remains unsupported.
 
 ## Verification
 
-- `npx vitest run tests/nse/trained-forecast.test.ts`: 4 tests passed, including
+- `npx vitest run tests/forecast/trained-forecast.test.ts`: 4 tests passed, including
   LightGBM fitting and frozen-fold causal invariance.
 - `npm run test:forecast`: 46 tests passed across six files, including joint
   FinBERT training and explorer coverage.

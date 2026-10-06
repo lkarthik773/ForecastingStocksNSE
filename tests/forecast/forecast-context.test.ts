@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ForecastContextApi } from '../../src/nse/api/forecast-context-api.js';
+import { ForecastContextApi } from '../../src/forecast/forecast-context-api.js';
 
 const request = {
   symbol: 'TCS',

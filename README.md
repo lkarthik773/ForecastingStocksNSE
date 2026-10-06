@@ -2,6 +2,56 @@
 
 A unified TypeScript API for both NSE (National Stock Exchange) and BSE (Bombay Stock Exchange) India. This package combines the functionality of both exchanges while keeping their APIs separate and isolated.
 
+## Repository Layout
+
+```text
+src/
+  nse/                 NSE exchange client, APIs, HTTP, types and utilities
+  bse/                 BSE exchange client, types and utilities
+  forecast/            Forecasts, rolling evaluation, LightGBM and FinBERT
+  kite/                Kite configuration, authentication and account reads
+  types/               Shared package types
+  index.ts             Existing package entry point
+apps/
+  explorer/            NSE/BSE/forecast HTTP explorer and browser assets
+  kite/                Kite HTTP server and Swagger documentation
+tests/
+  nse/                 NSE exchange tests
+  bse/                 BSE exchange tests
+  forecast/            Forecast and model tests
+  kite/                Kite authentication and read-only API tests
+  apps/                Explorer routing tests
+scripts/
+  build/               CommonJS postbuild tooling
+  forecast/            LightGBM environment setup and requirements
+config/examples/       Placeholder configuration; no real credentials
+docs/
+  development/         Main development context
+  kite/                Kite setup guide and feature context
+  checkpoints/         Dated development checkpoints
+dist/                  Generated ESM library output
+dist-cjs/              Generated CommonJS library output
+```
+
+The ignored local `.env.kite` remains at the repository root. Runtime caches
+remain under `node_modules/.cache`; neither is moved or published.
+Existing root, `/nse` and `/bse` package imports remain available. Forecast and
+Kite cores also have `/forecast` and `/kite` package entry points; HTTP apps are
+separate and are not included in the published library.
+
+| Task | Command |
+| --- | --- |
+| NSE/BSE/forecast explorer | `npm start` or `npm run explorer` |
+| Kite Swagger service | `npm run start:kite` |
+| Forecast verification | `npm run test:forecast` |
+| Kite verification | `npm run test:kite` and `npm run typecheck:kite` |
+| Library builds | `npm run build` |
+| LightGBM setup | `npm run setup:lightgbm` |
+
+See [development context](docs/development/CONTEXT.md),
+[Kite setup](docs/kite/README.md), [Kite context](docs/kite/CONTEXT.md),
+and the [environment template](config/examples/.env.kite.example).
+
 ## Features
 
 ### NSE API Features
@@ -114,7 +164,7 @@ or these settings on an existing Render Node web service:
 
 | Setting | Value |
 | --- | --- |
-| Build command | `npm ci --include=dev && npm run build && python3 -m venv node_modules/.cache/lightgbm/venv && node_modules/.cache/lightgbm/venv/bin/python -m pip install -r scripts/lightgbm-requirements.txt && node_modules/.cache/lightgbm/venv/bin/python -c "import lightgbm, numpy, sklearn; print('LightGBM', lightgbm.__version__)"` |
+| Build command | `npm ci --include=dev && npm run build && python3 -m venv node_modules/.cache/lightgbm/venv && node_modules/.cache/lightgbm/venv/bin/python -m pip install -r scripts/forecast/lightgbm-requirements.txt && node_modules/.cache/lightgbm/venv/bin/python -c "import lightgbm, numpy, sklearn; print('LightGBM', lightgbm.__version__)"` |
 | Start command | `npm start` |
 | Health check path | `/health` |
 | `NODE_VERSION` | `22` |
@@ -138,7 +188,7 @@ API. Same-origin checks are not authentication: non-browser clients can still
 call its operations. Restrict access before using it for a private service.
 Exchange sites may block cloud IP addresses even when the service is healthy.
 The build creates the Linux Python environment at the runtime's default path,
-`node_modules/.cache/lightgbm/venv`, installs `scripts/lightgbm-requirements.txt`,
+`node_modules/.cache/lightgbm/venv`, installs `scripts/forecast/lightgbm-requirements.txt`,
 and verifies the imports. Leave `LIGHTGBM_PYTHON` unset to use this environment;
 an existing override must point to a valid Linux interpreter. The Windows
 `setup:lightgbm` command does not run on Render. Existing manually configured

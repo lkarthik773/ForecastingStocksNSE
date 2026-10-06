@@ -2,7 +2,7 @@
 
 Date: 2026-10-05
 
-Living context: [Development Context](../DEVELOPMENT_CONTEXT.md).
+Living context: [Development Context](../development/CONTEXT.md).
 Status: implemented in the shared working tree; not committed or released.
 This is a documented handoff, not an immutable source-code backup or Git tag.
 
@@ -88,7 +88,7 @@ Captured before creating these handoff files:
   forecast/context/FinBERT/LightGBM/training/split modules, and focused tests.
 - Existing user changes were preserved. No Git commit, branch or tag was created.
 
-New handoff artifacts: root DEVELOPMENT_CONTEXT.md and this checkpoint.
+New handoff artifacts: root docs/development/CONTEXT.md and this checkpoint.
 Future edits must recheck the working tree rather than assume this list is fixed.
 
 ## Runtime And Resume
@@ -125,5 +125,5 @@ included as source artifacts and must be reproducible from setup.
 
 Read the living context and relevant source before the next change. Keep the
 14/3/6 schedule and real-label safeguards unless the user changes them. Record
-new verification honestly, update DEVELOPMENT_CONTEXT.md, and add a later dated
+new verification honestly, update docs/development/CONTEXT.md, and add a later dated
 checkpoint for the next substantive development milestone.

@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$root = Split-Path $PSScriptRoot -Parent
+$root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $cache = Join-Path $root 'node_modules/.cache/lightgbm'
 [System.IO.Directory]::CreateDirectory($cache) | Out-Null
 $uvFolder = Join-Path $cache 'uv'

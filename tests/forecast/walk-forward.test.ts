@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   addCalendarMonths,
   rollingFolds,
-} from '../../src/nse/api/walk-forward.js';
+} from '../../src/forecast/walk-forward.js';
 
 function dates() {
   const result: string[] = [];

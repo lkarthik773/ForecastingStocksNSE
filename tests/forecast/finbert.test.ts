@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { FinBertScorer } from '../../src/nse/api/finbert.js';
-import { historicalFinBertFeatures } from '../../src/nse/api/finbert-history.js';
-import { trainForecast } from '../../src/nse/api/trained-forecast.js';
+import { FinBertScorer } from '../../src/forecast/finbert.js';
+import { historicalFinBertFeatures } from '../../src/forecast/finbert-history.js';
+import { trainForecast } from '../../src/forecast/trained-forecast.js';
 
 const labels = [
   { label: 'negative', score: 0.2 },

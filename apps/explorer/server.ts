@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { NSE, BSE } from '../../src/index.js';
-import { ForecastInputError } from '../../src/nse/api/forecast-api.js';
+import { ForecastInputError } from '../../src/forecast/forecast-api.js';
 import {
   createEndpoints,
   InputError,

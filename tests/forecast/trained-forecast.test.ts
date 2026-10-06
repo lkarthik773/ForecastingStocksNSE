@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   technicalFeatures,
   trainForecast,
-} from '../../src/nse/api/trained-forecast.js';
+} from '../../src/forecast/trained-forecast.js';
 
 const prices = () => {
   const rows = [];
