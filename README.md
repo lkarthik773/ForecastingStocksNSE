@@ -95,8 +95,8 @@ exchange errors are displayed in the response pane. Dates use `YYYY-MM-DD`.
 File downloads and arbitrary URL requests are intentionally not exposed.
 Cookie/cache files stay in `node_modules/.cache/api-explorer`.
 
-The server binds only to `127.0.0.1` and rejects foreign origins. Do not expose
-it publicly. To use another port in PowerShell:
+By default, the server binds only to `127.0.0.1` and rejects foreign origins.
+To use another port in PowerShell:
 
 ```powershell
 $env:PORT = '3101'
@@ -104,6 +104,44 @@ npm run explorer
 ```
 
 Run its offline routing and validation tests with `npm run test:explorer`.
+
+### Render Web Service
+
+The package entry point is a library, not an HTTP server. Running
+`node dist-cjs/index.js` exports the clients and exits normally. Deploy the
+Explorer server instead, using the included [render.yaml](render.yaml) Blueprint
+or these settings on an existing Render Node web service:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `npm ci --include=dev && npm run build` |
+| Start command | `npm start` |
+| Health check path | `/health` |
+| `NODE_VERSION` | `22` |
+| `HOST` | `0.0.0.0` |
+
+Render supplies `PORT` and `RENDER_EXTERNAL_URL`. The server uses the supplied
+port and allows only the configured public hostname and same-origin browser
+requests, including HTTPS through Render's proxy. For a custom domain, set
+`EXPLORER_PUBLIC_ORIGIN` to its exact origin (for example,
+`https://stocks.example.com`, without a trailing slash). This replaces the
+Render hostname allowlist. `/health` is a lightweight process check and does
+not contact either exchange.
+
+Use npm for the build above. Bun's "Blocked postinstalls" warning is separate
+from the early exit; optional native inference packages may require installation
+scripts. Keep development dependencies installed because `npm start` uses
+`tsx` and the Explorer serves icons from `lucide`.
+
+Hosted mode exposes an unauthenticated developer tool, not a hardened production
+API. Same-origin checks are not authentication: non-browser clients can still
+call its operations. Restrict access before using it for a private service.
+Exchange sites may block cloud IP addresses even when the service is healthy.
+Technical forecasts additionally need a Linux Python environment with
+`scripts/lightgbm-requirements.txt` installed and `LIGHTGBM_PYTHON` set to that
+interpreter; the Windows `setup:lightgbm` command does not run on Render. Use
+`model: baseline` when Python LightGBM is not installed. FinBERT also requires
+its optional runtime and a configured local news archive.
 
 ### Stock Forecast (Experimental, NSE)
 
@@ -410,5 +448,9 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Previously distributed versions and material covered by the existing MIT grant
+remain under MIT; those grants are not withdrawn. Original contributions owned
+by the GitHub account `lkarthik773` and first published after 2026-10-05 are All
+Rights Reserved. Upstream and third-party material remains under its applicable
+license. See [LICENSE](LICENSE) for details.
 

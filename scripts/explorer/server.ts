@@ -11,7 +11,20 @@ import {
   type Endpoint,
 } from './api.js';
 
-export function createExplorerServer(endpoints: Endpoint[]) {
+export function createExplorerServer(
+  endpoints: Endpoint[],
+  options: { publicOrigin?: string } = {}
+) {
+  const publicUrl = options.publicOrigin
+    ? new URL(options.publicOrigin)
+    : undefined;
+  if (
+    publicUrl &&
+    (!['http:', 'https:'].includes(publicUrl.protocol) ||
+      publicUrl.origin !== options.publicOrigin)
+  ) {
+    throw new Error('Public origin must be an HTTP(S) origin without a path.');
+  }
   let busy = false;
   return createServer(async (request, response) => {
     const json = (status: number, data: unknown) => {
@@ -21,16 +34,23 @@ export function createExplorerServer(endpoints: Endpoint[]) {
       });
       response.end(JSON.stringify(data));
     };
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+    if (request.method === 'GET' && pathname === '/health') {
+      json(200, { status: 'ok' });
+      return;
+    }
     const host = request.headers.host;
     if (
       !host ||
-      !/^(localhost|127\.0\.0\.1):\d+$/.test(host) ||
-      (request.headers.origin && request.headers.origin !== `http://${host}`)
+      (publicUrl
+        ? host !== publicUrl.host ||
+          (request.headers.origin && request.headers.origin !== publicUrl.origin)
+        : !/^(localhost|127\.0\.0\.1):\d+$/.test(host) ||
+          (request.headers.origin && request.headers.origin !== `http://${host}`))
     ) {
-      json(403, { error: 'Only same-origin localhost requests are allowed.' });
+      json(403, { error: 'Only requests to the configured host and origin are allowed.' });
       return;
     }
-    const pathname = new URL(request.url ?? '/', `http://${host}`).pathname;
     if (request.method === 'GET' && pathname === '/api/endpoints') {
       json(
         200,
@@ -152,15 +172,20 @@ if (
     forecastTraining: { newsArchivePath: process.env.FINBERT_NEWS_ARCHIVE },
   });
   const bse = new BSE({ downloadFolder, timeout: 20000 });
-  const server = createExplorerServer(createEndpoints({ nse, bse }));
+  const publicOrigin =
+    process.env.EXPLORER_PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_URL;
+  const host = process.env.HOST ?? (publicOrigin ? '0.0.0.0' : '127.0.0.1');
+  const server = createExplorerServer(createEndpoints({ nse, bse }), {
+    publicOrigin,
+  });
   server.on('error', (error) => {
     console.error(
       `Explorer could not start: ${error.message}. Set PORT to use another port.`
     );
     process.exitCode = 1;
   });
-  server.listen(port, '127.0.0.1', () =>
-    console.log(`API explorer: http://127.0.0.1:${port}`)
+  server.listen(port, host, () =>
+    console.log(`API explorer: ${publicOrigin ?? `http://${host}:${port}`}`)
   );
   const shutdown = () =>
     server.close(() => {

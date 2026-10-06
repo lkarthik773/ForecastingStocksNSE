@@ -1,6 +1,6 @@
 # Development Context
 
-Last checkpoint: [2026-10-05 - Close-Derived Forecast Indicators](checkpoints/2026-10-05-close-derived-indicators.md).
+Last checkpoint: [2026-10-06 - Render Explorer Deployment](checkpoints/2026-10-06-render-deployment.md).
 
 This is the living handoff document for subsequent development. Read it and the
 latest checkpoint before changing the explorer or forecasting code. The source
@@ -32,6 +32,12 @@ and add a dated checkpoint after a substantial feature or architecture change.
 6. Replaced random forests with official LightGBM and changed the lookback to
    three years, using the user's 14-month train / 3-month test / 6-month rolling
    advance schedule. Local FinBERT remains optional; hosted news is removed.
+7. Added opt-in hosted Explorer support for Render. `npm start` runs the HTTP
+  server, not the library entry point. Hosted mode uses `RENDER_EXTERNAL_URL`
+  or `EXPLORER_PUBLIC_ORIGIN`, binds to all interfaces, and enforces the exact
+  public host/origin. Local-only behavior remains the default. `/health` is
+  available without exchange calls. This is still an unauthenticated developer
+  tool; the Render Blueprint does not install Python LightGBM.
 
 The older two-year lookback, EODHD API token settings, provider news-symbol
 filter, and random-forest descriptions are superseded, not current behavior.

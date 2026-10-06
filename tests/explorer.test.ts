@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { request } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { NSE, BSE } from '../src/index.js';
@@ -34,13 +35,68 @@ afterEach(async () => {
   }
 });
 
-async function start() {
-  server = createExplorerServer(endpoints);
+async function start(options: { publicOrigin?: string } = {}) {
+  server = createExplorerServer(endpoints, options);
   await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
+async function requestWithHost(
+  url: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string } = {}
+) {
+  return new Promise<Response>((resolve, reject) => {
+    const outgoing = request(url, options, async (incoming) => {
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of incoming) chunks.push(Buffer.from(chunk));
+        resolve(new Response(Buffer.concat(chunks), { status: incoming.statusCode }));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    outgoing.on('error', reject);
+    outgoing.end(options.body);
+  });
+}
+
 describe('API explorer', () => {
+  it('accepts the configured Render host and HTTPS origin but rejects others', async () => {
+    const publicOrigin = 'https://nse-explorer.onrender.com';
+    const base = await start({ publicOrigin });
+    const headers = { Host: 'nse-explorer.onrender.com', Origin: publicOrigin };
+    expect((await requestWithHost(`${base}/`, { headers })).status).toBe(200);
+    expect((await requestWithHost(`${base}/api/endpoints`, { headers })).status).toBe(200);
+    expect((await requestWithHost(`${base}/api/endpoints`, {
+      headers: { Host: headers.Host },
+    })).status).toBe(200);
+    expect((await requestWithHost(`${base}/api/run/nse-quote`, {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/json' },
+      body: '{"symbol":"TCS"}',
+    })).status).toBe(200);
+    expect((await fetch(`${base}/api/endpoints`)).status).toBe(403);
+    expect((await requestWithHost(`${base}/api/endpoints`, {
+      headers: { ...headers, Origin: 'https://example.com' },
+    })).status).toBe(403);
+    expect((await requestWithHost(`${base}/api/endpoints`, {
+      headers: { ...headers, Host: 'example.com' },
+    })).status).toBe(403);
+    const health = await fetch(`${base}/health`);
+    expect(health.status).toBe(200);
+    expect(await health.json()).toEqual({ status: 'ok' });
+  });
+
+  it('keeps public hosts disabled by default and rejects invalid public origins', async () => {
+    const base = await start();
+    expect((await requestWithHost(`${base}/api/endpoints`, {
+      headers: { Host: 'nse-explorer.onrender.com' },
+    })).status).toBe(403);
+    for (const publicOrigin of ['https://example.com/path', 'ftp://example.com']) {
+      expect(() => createExplorerServer(endpoints, { publicOrigin })).toThrow();
+    }
+  });
+
   it('forwards custom dates as calendar strings and returns 400 for invalid ranges', async () => {
     const base = await start();
     const request = (body: unknown) =>
