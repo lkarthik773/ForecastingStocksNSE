@@ -30,12 +30,20 @@ export function rollingFolds(
   dates: string[],
   historyStart: string,
   historyEndExclusive: string,
-  horizon: number
+  horizon: number,
+  stepMonths = 6,
+  trainMonths = 14
 ): WalkForwardFold[] {
   if (
     !Number.isInteger(horizon) ||
     horizon < 1 ||
     horizon > 15 ||
+    !Number.isInteger(stepMonths) ||
+    stepMonths < 1 ||
+    stepMonths > 24 ||
+    !Number.isInteger(trainMonths) ||
+    trainMonths < 1 ||
+    trainMonths > 120 ||
     dates.some(
       (date, index) =>
         !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
@@ -43,12 +51,12 @@ export function rollingFolds(
     )
   )
     throw new Error(
-      'Sorted unique dates and a valid trading-session horizon are required.'
+      'Sorted unique dates, a valid trading-session horizon and a valid month step are required.'
     );
   const folds: WalkForwardFold[] = [];
-  for (let offset = 0; ; offset += 6) {
+  for (let offset = 0; ; offset += stepMonths) {
     const trainStart = addCalendarMonths(historyStart, offset);
-    const trainEndExclusive = addCalendarMonths(trainStart, 14);
+    const trainEndExclusive = addCalendarMonths(trainStart, trainMonths);
     const testEndExclusive = addCalendarMonths(trainEndExclusive, 3);
     if (testEndExclusive > historyEndExclusive) break;
     const trainIndexes: number[] = [];
@@ -83,7 +91,7 @@ export function rollingFolds(
   }
   if (!folds.length)
     throw new Error(
-      'History does not contain a complete 14-month train / 3-month test fold.'
+      `History does not contain a complete ${trainMonths}-month train / 3-month test fold.`
     );
   return folds;
 }

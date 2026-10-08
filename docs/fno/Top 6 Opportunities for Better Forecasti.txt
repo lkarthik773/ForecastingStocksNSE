@@ -1,0 +1,38 @@
+Top 6 Opportunities for Better Forecasting:
+Note: expected gains below are hypotheses, not measured results. See the development checkpoint and status documents before choosing work.
+
+🎯 Sector Context & Relative Strength [HIGH IMPACT]
+
+Compare stock to its sector index (Banking, IT, Energy)
+Add ~12 features for sector-relative performance
+
+Expected gain: +3-7% accuracy
+
+🎯 F&O/Open Interest Signals [TESTED; NO GENERAL IMPROVEMENT PROVEN]
+
+Futures premium, Put/Call ratios, OI changes
+Thirteen-symbol archive comparison and matched feature ablations completed
+The predeclared direction criterion was not met; keep experimental
+
+🎯 Probability Classifiers [BENCHMARKED; NOT ADOPTED]
+
+Historical classifier benchmark completed; results were mixed and worse overall
+Prospective benchmark-only tracking is in progress; no production adoption
+
+🎯 Training Window Optimization [TESTED; MODEST MAPE GAIN, NO DIRECTION GAIN]
+
+20 months reduced MAPE versus 14 months on both horizons, but all windows
+trailed the no-change baseline and directional gains were inconclusive
+Keep the 14-month production schedule; seek independent validation
+
+🎯 Intraday VWAP Integration [MEDIUM IMPACT]
+
+Requires intraday data (not yet in pipeline)
+VWAP is anchor for support/resistance
+Expected gain: +2-4% accuracy
+
+🎯 Regime Detection [MEDIUM IMPACT]
+
+Detect bull/bear/sideways markets
+Use different features for each regime
+Expected gain: +3-8% accuracy

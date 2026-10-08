@@ -3,10 +3,14 @@ import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { config as loadEnvironment } from 'dotenv';
 import { loadKiteConfig, type KiteConfig, type KiteUser } from '../../src/kite/config.js';
 import { KiteReadError, kiteReadPaths, readKiteAccount, type KiteResource } from '../../src/kite/client.js';
+import { KitePreviewError, assessKitePreview, parseKitePreviewRequest } from '../../src/kite/preview.js';
+import type { ForecastParams, ForecastResult } from '../../src/forecast/forecast-api.js';
+import { NSEClient } from '../../src/nse/client/nse-client.js';
 import { kiteOpenApi, swaggerHtml, swaggerInit } from './docs.js';
 import { KiteLoginFlow, type TokenExchanger } from '../../src/kite/auth.js';
 
@@ -16,7 +20,35 @@ export type AccountReader = (
   config: KiteConfig, user: KiteUser, resource: KiteResource
 ) => Promise<unknown>;
 
-export function createKiteServer(config: KiteConfig, reader: AccountReader = readKiteAccount, exchanger?: TokenExchanger) {
+export type ForecastProvider = (params: ForecastParams) => Promise<ForecastResult>;
+
+async function readJsonBody(request: import('node:http').IncomingMessage): Promise<unknown> {
+  const contentType = request.headers['content-type'];
+  if (typeof contentType !== 'string' || !/^application\/json(?:\s*;|$)/i.test(contentType))
+    throw new KitePreviewError(415, 'Content-Type must be application/json.');
+
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += data.length;
+    if (size > 8192) throw new KitePreviewError(413, 'Preview request body is too large.');
+    chunks.push(data);
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch {
+    throw new KitePreviewError(400, 'Request body must contain valid JSON.');
+  }
+}
+
+export function createKiteServer(
+  config: KiteConfig,
+  reader: AccountReader = readKiteAccount,
+  exchanger?: TokenExchanger,
+  forecastProvider?: ForecastProvider
+) {
   const identities = config.users.map((user) => ({
     user: { ...user },
     digest: createHash('sha256').update(user.apiToken).digest(),
@@ -135,8 +167,9 @@ export function createKiteServer(config: KiteConfig, reader: AccountReader = rea
       json(401, { error: 'Valid API bearer authentication is required.' });
       return;
     }
-    if (request.method !== 'GET') {
-      response.setHeader('Allow', 'GET');
+    const previewPath = url.pathname === '/api/kite/preview';
+    if ((previewPath && request.method !== 'POST') || (!previewPath && request.method !== 'GET')) {
+      response.setHeader('Allow', previewPath ? 'POST' : 'GET');
       json(405, { error: 'HOLD mode: only read requests are permitted.' });
       return;
     }
@@ -151,7 +184,7 @@ export function createKiteServer(config: KiteConfig, reader: AccountReader = rea
         tradingEnabled: false,
         accessTokenConfigured: Boolean(identity.user.kiteAccessToken),
         loginEnabled: Boolean(identity.user.kiteApiSecret && identity.user.kiteUserId),
-        forecastIntegration: 'planned; no forecast can trigger an order',
+        forecastIntegration: 'forecast-gated preview only; order placement disabled',
       });
       return;
     }
@@ -174,6 +207,63 @@ export function createKiteServer(config: KiteConfig, reader: AccountReader = rea
         json(error instanceof KiteReadError ? error.statusCode : 502, {
           error: error instanceof KiteReadError ? error.message : 'Could not start Kite login.',
         });
+      }
+      return;
+    }
+    if (previewPath) {
+      if (!forecastProvider) {
+        json(503, { error: 'Forecast preview is not configured.' });
+        return;
+      }
+      let previewRequest;
+      try {
+        previewRequest = parseKitePreviewRequest(await readJsonBody(request));
+      } catch (error) {
+        json(error instanceof KitePreviewError ? error.statusCode : 400, {
+          error: error instanceof KitePreviewError ? error.message : 'Invalid preview request.',
+        });
+        return;
+      }
+      const username = identity.user.username;
+      if (busy.has(username) || Date.now() < (nextRead.get(username) ?? 0)) {
+        response.setHeader('Retry-After', String(Math.ceil(config.minReadIntervalMs / 1000)));
+        json(429, { error: 'Account reads are rate limited. Try again later.' });
+        return;
+      }
+      busy.add(username);
+      nextRead.set(username, Date.now() + config.minReadIntervalMs);
+      try {
+        const forecast = await forecastProvider({
+          symbol: previewRequest.symbol,
+          horizon: previewRequest.horizon,
+          model: 'technical',
+          context: 'auto',
+          sentiment: 'off',
+        });
+        const assessment = assessKitePreview(previewRequest, forecast);
+        if (!assessment.eligible) {
+          json(422, {
+            error: 'Preview blocked by safety checks.',
+            eligible: false,
+            mode: 'HOLD',
+            tradingEnabled: false,
+            blockedReasons: assessment.blockedReasons,
+            forecast: assessment.forecast,
+          });
+          return;
+        }
+        json(200, {
+          data: assessment.preview,
+          eligible: true,
+          mode: 'HOLD',
+          tradingEnabled: false,
+        });
+      } catch (error) {
+        json(error instanceof KitePreviewError ? error.statusCode : 502, {
+          error: error instanceof KitePreviewError ? error.message : 'Forecast preview failed. No trading action was taken.',
+        });
+      } finally {
+        busy.delete(username);
       }
       return;
     }
@@ -211,13 +301,19 @@ export function createKiteServer(config: KiteConfig, reader: AccountReader = rea
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   loadEnvironment({ path: process.env.KITE_ENV_FILE ?? '.env.kite', quiet: true });
   const config = loadKiteConfig();
-  const server = createKiteServer(config);
+  const nse = new NSEClient(join(tmpdir(), 'nseapi-kite-forecast'), { server: true });
+  const server = createKiteServer(
+    config,
+    undefined,
+    undefined,
+    (params) => nse.forecastStock(params)
+  );
   server.on('error', () => {
     console.error('Kite service could not listen. Check host and port configuration.');
     process.exitCode = 1;
   });
   server.listen(config.port, config.host, () => {
-    console.log(`Kite read-only service listening on port ${config.port}. HOLD; trading disabled.`);
+    console.log(`Kite service listening on port ${config.port}. HOLD; trading disabled.`);
     console.log(`Swagger UI: ${config.publicOrigin ?? `http://${config.host === '::1' ? '[::1]' : config.host}:${config.port}`}/docs`);
   });
 }

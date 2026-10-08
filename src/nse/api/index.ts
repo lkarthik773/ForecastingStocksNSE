@@ -5,8 +5,9 @@
 export { EquityApi } from "./equity-api.js";
 export { OptionsApi } from "./options-api.js";
 export { HistoricalApi } from "./historical-api.js";
-export { ForecastApi, ForecastInputError, ForecastDataError } from "../../forecast/forecast-api.js";
+export { ForecastApi, ForecastInputError, ForecastDataError, FORECAST_HISTORY_MONTH_LIMITS } from "../../forecast/forecast-api.js";
 export type { ForecastParams, ForecastResult, ForecastPoint, ForecastDirection } from "../../forecast/forecast-api.js";
+export type { HistoricalDataQuality } from "../../forecast/forecast-api.js";
 export { ForecastContextApi } from "../../forecast/forecast-context-api.js";
 export { FinBertScorer } from "../../forecast/finbert.js";
 export type { FinBertScore, SentimentScorer } from "../../forecast/finbert.js";

@@ -1,8 +1,13 @@
 import type { HistoricalApi } from '../nse/api/historical-api.js';
+import type { OptionsApi } from '../nse/api/options-api.js';
 import {
   trainForecast,
+  trainCurrentProbabilitySnapshot,
+  type TrainingFeatureSet,
   type TrainedForecast,
+  type TrainingObservation,
   type TrainingSentiment,
+  type CurrentProbabilityPrediction,
 } from './trained-forecast.js';
 import {
   loadFinBertArchive,
@@ -14,15 +19,52 @@ import type {
   ForecastContextProvider,
   MarketObservation,
 } from './forecast-context-api.js';
+import { addCalendarMonths } from './walk-forward.js';
+import {
+  adjustHistoricalRows,
+  parseNseShareAdjustments,
+  type ShareAdjustment,
+} from './corporate-actions.js';
+import {
+  getFnoFeaturesForObservation,
+} from './trained-forecast.js';
+import {
+  FNO_FEATURE_NAMES,
+  type FnoFeatureLookbacks,
+  type FnoFeatures,
+} from './fno-features.js';
+import {
+  loadHistoricalFnoArchive,
+  type FnoArchiveOptions,
+} from './fno-archive.js';
+import { fetchHistoricalFuturesObservations } from './futures-data-fetcher.js';
+import {
+  getFuturesFeaturesForObservation,
+  type FuturesFeatures,
+} from './futures-features.js';
+import type { ForecastEvent } from './target-outcomes.js';
+
+export const FORECAST_HISTORY_MONTH_LIMITS = {
+  defaultMonths: 60,
+  minMonths: 36,
+  maxMonths: 120,
+} as const;
 
 export interface ForecastParams {
   symbol: string;
   horizon?: 'next_day' | 'week' | 'custom';
+  historyMonths?: number;
   start_date?: string;
   end_date?: string;
   context?: 'auto' | 'off';
   sentiment?: 'off' | 'finbert';
-  model?: 'baseline' | 'technical' | 'technical_finbert';
+  model?:
+    | 'baseline'
+    | 'technical'
+    | 'technical_finbert'
+    | 'technical_fno'
+    | 'technical_futures';
+  includeFno?: boolean;
 }
 
 export type ForecastDirection = 'up' | 'down' | 'flat';
@@ -62,12 +104,14 @@ export interface ForecastResult {
   };
   lastClose: { date: string; price: number };
   history: {
+    requestedMonths: number;
     requestedFrom: string;
     requestedTo: string;
     firstDate: string;
     lastDate: string;
     observations: number;
     discardedRows: number;
+    dataQuality: HistoricalDataQuality;
   };
   model: {
     name: string;
@@ -91,6 +135,8 @@ export interface ForecastResult {
   backtest: {
     horizonSessions: number;
     samples: number;
+    qualityExcludedSamples: number;
+    unscoredEligibleSamples: number;
     meanAbsolutePercentageError: number;
     naiveMeanAbsolutePercentageError: number;
     directionalAccuracyPct: number;
@@ -102,12 +148,131 @@ export interface ForecastResult {
   warnings: string[];
 }
 
+export interface ForecastProbabilitySnapshot {
+  symbol: string;
+  originDate: string;
+  generatedAt: string;
+  requestedMonths: number;
+  lastClose: number;
+  dataQuality: HistoricalDataQuality;
+  predictions: CurrentProbabilityPrediction[];
+}
+
 export class ForecastInputError extends Error {}
 export class ForecastDataError extends Error {}
 
 interface Observation {
   date: string;
   close: number;
+  volume?: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  qualityExcluded?: boolean;
+  fnoFeatures?: FnoFeatures;
+  futuresFeatures?: FuturesFeatures;
+}
+const benchmarkFeatureSets = new WeakMap<ForecastApi, TrainingFeatureSet>();
+const benchmarkFnoFeatureSets = new WeakMap<
+  ForecastApi,
+  ReadonlySet<keyof FnoFeatures>
+>();
+const benchmarkFnoFeatureLookbacks = new WeakMap<
+  ForecastApi,
+  FnoFeatureLookbacks
+>();
+const benchmarkFnoArchiveOptions = new WeakMap<ForecastApi, FnoArchiveOptions>();
+const benchmarkProbabilityEvents = new WeakMap<ForecastApi, ForecastEvent[]>();
+const benchmarkTrainingWindows = new WeakMap<
+  ForecastApi,
+  { trainMonths: 8 | 14 | 20; foldAnchorTrainMonths: 20 }
+>();
+
+export function configureForecastFeatureSetForBenchmark(
+  api: ForecastApi,
+  featureSet: TrainingFeatureSet
+) {
+  benchmarkFeatureSets.set(api, featureSet);
+}
+
+export function configureForecastProbabilityEventsForBenchmark(
+  api: ForecastApi,
+  events?: readonly ForecastEvent[]
+) {
+  if (!events?.length) {
+    benchmarkProbabilityEvents.delete(api);
+    return;
+  }
+  benchmarkProbabilityEvents.set(api, [...events]);
+}
+
+export function configureForecastTrainingWindowForBenchmark(
+  api: ForecastApi,
+  trainMonths: 8 | 14 | 20
+) {
+  benchmarkTrainingWindows.set(api, {
+    trainMonths,
+    foldAnchorTrainMonths: 20,
+  });
+}
+
+export function configureFnoFeatureSetForBenchmark(
+  api: ForecastApi,
+  featureNames?: readonly (keyof FnoFeatures)[]
+) {
+  if (!featureNames) {
+    benchmarkFnoFeatureSets.delete(api);
+    return;
+  }
+  benchmarkFnoFeatureSets.set(api, new Set(featureNames));
+}
+
+export function configureFnoFeatureLookbacksForBenchmark(
+  api: ForecastApi,
+  lookbacks?: FnoFeatureLookbacks
+) {
+  if (lookbacks) benchmarkFnoFeatureLookbacks.set(api, lookbacks);
+  else benchmarkFnoFeatureLookbacks.delete(api);
+}
+
+export function configureFnoArchiveOptionsForBenchmark(
+  api: ForecastApi,
+  options?: FnoArchiveOptions
+) {
+  if (options) benchmarkFnoArchiveOptions.set(api, options);
+  else benchmarkFnoArchiveOptions.delete(api);
+}
+
+export interface HistoricalDataQuality {
+  rawRows: number;
+  duplicateRows: number;
+  invalidRows: number;
+  outOfRangeRows: number;
+  nonEquityRows: number;
+  ohlcUnavailableRows: number;
+  intradayReversalThresholds: {
+    minRangePctOfOpen: number;
+    maxBodyPctOfRange: number;
+  };
+  intradayReversalCandles: {
+    date: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    rangePctOfOpen: number;
+    bodyPctOfOpen: number;
+    bodyPctOfRange: number;
+  }[];
+  largeDailyChanges: {
+    fromDate: string;
+    toDate: string;
+    changePct: number;
+  }[];
+  calendarIntervalsOverFourDays: number;
+  maxCalendarIntervalDays: number;
+  corporateActionAdjustment: 'applied' | 'not applied by forecast';
+  corporateActionAdjustments: ShareAdjustment[];
 }
 const DAY = 86400000;
 const MONTHS = [
@@ -180,72 +345,255 @@ function weekdays(from: string, to: string): string[] {
   return dates;
 }
 
+function parsePrice(value: unknown): number | undefined {
+  const price =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+        ? Number(value.replace(/,/g, ''))
+        : NaN;
+  return Number.isFinite(price) && price > 0 && price <= 1e9
+    ? price
+    : undefined;
+}
+
+function parseVolume(value: unknown): number | undefined {
+  const quantity =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+        ? Number(value.replace(/,/g, ''))
+        : NaN;
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : undefined;
+}
+
 function normalize(
   rows: Record<string, unknown>[],
   from: string,
   to: string,
   symbol: string
 ) {
-  const unique = new Map<string, number>();
-  let discardedRows = 0;
+  const unique = new Map<string, Observation>();
+  let duplicateRows = 0;
+  let invalidRows = 0;
+  let outOfRangeRows = 0;
+  let nonEquityRows = 0;
+  let ohlcUnavailableRows = 0;
+  const intradayReversalCandles: HistoricalDataQuality['intradayReversalCandles'] =
+    [];
   for (const row of rows) {
     if (!row || typeof row !== 'object') {
-      discardedRows++;
+      invalidRows++;
       continue;
     }
     const date = parseDate(
       row.mtimestamp ?? row.CH_TIMESTAMP ?? row.chTimestamp
     );
     const raw = row.chClosingPrice ?? row.CH_CLOSING_PRICE;
-    const close =
-      typeof raw === 'number'
-        ? raw
-        : typeof raw === 'string' && raw.trim()
-          ? Number(raw.replace(/,/g, ''))
-          : NaN;
+    const close = parsePrice(raw);
+    const volume = parseVolume(
+      row.chTotTradedQty ??
+        row.CH_TOT_TRADED_QTY ??
+        row.totalTradedVolume ??
+        row.volume
+    );
+    const open = parsePrice(row.chOpeningPrice ?? row.CH_OPENING_PRICE);
+    const high = parsePrice(row.chTradeHighPrice ?? row.CH_TRADE_HIGH_PRICE);
+    const low = parsePrice(row.chTradeLowPrice ?? row.CH_TRADE_LOW_PRICE);
     const series = row.chSeries ?? row.CH_SERIES;
     const rowSymbol = row.chSymbol ?? row.CH_SYMBOL;
     if (rowSymbol && rowSymbol !== symbol)
       throw new ForecastDataError(
         'Historical response contains a different stock symbol.'
       );
-    if (
-      !date ||
-      !Number.isFinite(close) ||
-      close <= 0 ||
-      close > 1e9 ||
-      date < from ||
-      date > to ||
-      (series && series !== 'EQ')
-    ) {
-      discardedRows++;
+    if (!date || close === undefined) {
+      invalidRows++;
       continue;
     }
+    if (date < from || date > to) {
+      outOfRangeRows++;
+      continue;
+    }
+    if (series && series !== 'EQ') {
+      nonEquityRows++;
+      continue;
+    }
+    const hasValidOhlc =
+      open !== undefined &&
+      high !== undefined &&
+      low !== undefined &&
+      high >= Math.max(open, close) &&
+      low <= Math.min(open, close) &&
+      high >= low;
+    if (!hasValidOhlc) ohlcUnavailableRows++;
+    const rangePctOfOpen =
+      hasValidOhlc ? ((high - low) / open) * 100 : undefined;
+    const bodyPctOfOpen =
+      hasValidOhlc ? (Math.abs(close - open) / open) * 100 : undefined;
+    const bodyPctOfRange =
+      hasValidOhlc && high > low
+        ? (Math.abs(close - open) / (high - low)) * 100
+        : undefined;
+    const isIntradayReversal =
+      hasValidOhlc &&
+      rangePctOfOpen! >= 10 &&
+      bodyPctOfRange !== undefined &&
+      bodyPctOfRange <= 50;
+    const observation: Observation = {
+      date,
+      close,
+      ...(volume === undefined ? {} : { volume }),
+      ...(hasValidOhlc ? { open, high, low } : {}),
+      ...(isIntradayReversal ? { qualityExcluded: true } : {}),
+    };
     if (unique.has(date)) {
-      if (unique.get(date) !== close)
+      const existing = unique.get(date)!;
+      if (existing.close !== close)
         throw new ForecastDataError(`Conflicting closing prices for ${date}.`);
-      discardedRows++;
-    } else unique.set(date, close);
+      if (existing.volume !== volume) existing.volume = undefined;
+      duplicateRows++;
+      if (isIntradayReversal && !existing.qualityExcluded) {
+        existing.qualityExcluded = true;
+        intradayReversalCandles.push({
+          date,
+          open,
+          high,
+          low,
+          close,
+          rangePctOfOpen: round(rangePctOfOpen!, 4),
+          bodyPctOfOpen: round(bodyPctOfOpen!, 4),
+          bodyPctOfRange: round(bodyPctOfRange!, 4),
+        });
+      }
+    } else {
+      unique.set(date, observation);
+      if (isIntradayReversal)
+        intradayReversalCandles.push({
+          date,
+          open,
+          high,
+          low,
+          close,
+          rangePctOfOpen: round(rangePctOfOpen!, 4),
+          bodyPctOfOpen: round(bodyPctOfOpen!, 4),
+          bodyPctOfRange: round(bodyPctOfRange!, 4),
+        });
+    }
   }
-  const observations = [...unique.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([date, close]) => ({ date, close }));
-  return { observations, discardedRows };
+  const observations = [...unique.values()]
+    .sort((left, right) => left.date.localeCompare(right.date))
+    .map(({ date, close, volume, open, high, low, qualityExcluded }): Observation => ({
+      date,
+      close,
+      ...(volume === undefined ? {} : { volume }),
+      ...(open === undefined ? {} : { open }),
+      ...(high === undefined ? {} : { high }),
+      ...(low === undefined ? {} : { low }),
+      ...(qualityExcluded ? { qualityExcluded } : {}),
+    }));
+  let calendarIntervalsOverFourDays = 0;
+  let maxCalendarIntervalDays = 0;
+  const largeDailyChanges: HistoricalDataQuality['largeDailyChanges'] = [];
+  for (let index = 1; index < observations.length; index++) {
+    const previous = observations[index - 1];
+    const current = observations[index];
+    const intervalDays = (Date.parse(`${current.date}T00:00:00Z`) -
+      Date.parse(`${previous.date}T00:00:00Z`)) / DAY;
+    maxCalendarIntervalDays = Math.max(maxCalendarIntervalDays, intervalDays);
+    if (intervalDays > 4) calendarIntervalsOverFourDays++;
+    const changePct = (current.close / previous.close - 1) * 100;
+    if (Math.abs(changePct) > 25)
+      largeDailyChanges.push({
+        fromDate: previous.date,
+        toDate: current.date,
+        changePct: round(changePct, 4),
+      });
+  }
+  return {
+    observations,
+    discardedRows: duplicateRows + invalidRows + outOfRangeRows + nonEquityRows,
+    dataQuality: {
+      rawRows: rows.length,
+      duplicateRows,
+      invalidRows,
+      outOfRangeRows,
+      nonEquityRows,
+      ohlcUnavailableRows,
+      intradayReversalThresholds: {
+        minRangePctOfOpen: 10,
+        maxBodyPctOfRange: 50,
+      },
+      intradayReversalCandles,
+      largeDailyChanges,
+      calendarIntervalsOverFourDays,
+      maxCalendarIntervalDays,
+      corporateActionAdjustment: 'not applied by forecast' as
+        | 'applied'
+        | 'not applied by forecast',
+      corporateActionAdjustments: [] as ShareAdjustment[],
+    },
+  };
+}
+
+export function normalizeForecastHistoricalRows(
+  rows: Record<string, unknown>[],
+  from: string,
+  to: string,
+  symbol: string,
+  corporateActionRows?: Record<string, unknown>[]
+): {
+  observations: TrainingObservation[];
+  discardedRows: number;
+  dataQuality: HistoricalDataQuality;
+  corporateActionAdjustments: ShareAdjustment[];
+} {
+  if (!Array.isArray(rows))
+    throw new ForecastDataError(
+      'Historical API did not return daily price rows.'
+    );
+  if (corporateActionRows !== undefined && !Array.isArray(corporateActionRows))
+    throw new ForecastDataError(
+      'Corporate action API did not return a list of events.'
+    );
+  const corporateActionAdjustments = corporateActionRows
+    ? parseNseShareAdjustments(corporateActionRows, symbol)
+    : [];
+  const historicalRows = corporateActionRows
+    ? adjustHistoricalRows(rows, corporateActionAdjustments)
+    : rows;
+  const normalized = normalize(historicalRows, from, to, symbol);
+  normalized.dataQuality.corporateActionAdjustment = corporateActionRows
+    ? 'applied'
+    : 'not applied by forecast';
+  normalized.dataQuality.corporateActionAdjustments =
+    corporateActionAdjustments;
+  return { ...normalized, corporateActionAdjustments };
 }
 
 function fit(
   observations: Observation[],
   marketRows: MarketObservation[] = []
 ) {
-  const returns = observations
-    .slice(1)
-    .map(
-      (row, index) => Math.log(row.close) - Math.log(observations[index].close)
+  const returnSamples = observations.slice(1).flatMap((row, index) => {
+    const previous = observations[index];
+    return previous.qualityExcluded || row.qualityExcluded
+      ? []
+      : [{
+          fromDate: previous.date,
+          date: row.date,
+          value: Math.log(row.close) - Math.log(previous.close),
+        }];
+  });
+  if (returnSamples.length < 2)
+    throw new ForecastDataError(
+      'Insufficient clean adjacent closes remain after excluding flagged intraday reversals.'
     );
-  const mean = average(returns);
+  const returns = returnSamples.map((row) => row.value);
+  const values = returns;
+  const mean = average(values);
   const variance =
-    returns.reduce((total, value) => total + (value - mean) ** 2, 0) /
-    (returns.length - 1);
+    values.reduce((total, value) => total + (value - mean) ** 2, 0) /
+    (values.length - 1);
   let market: {
     beta: number;
     recentChange5Pct: number;
@@ -261,14 +609,14 @@ function fit(
       )
       .map((row) => [row.date, row.close])
   );
-  const pairs = observations.slice(1).flatMap((row, index) => {
-    const previous = prices.get(observations[index].date);
+  const pairs = returnSamples.flatMap((row) => {
+    const previous = prices.get(row.fromDate);
     const current = prices.get(row.date);
     return previous && current
       ? [
           {
             date: row.date,
-            stock: returns[index],
+            stock: row.value,
             market: Math.log(current) - Math.log(previous),
           },
         ]
@@ -364,10 +712,19 @@ function backtest(
   let hits = 0;
   let covered = 0;
   const first = Math.max(252, observations.length - sessions - 60);
+  let qualityExcludedSamples = 0;
   for (let origin = first; origin < observations.length - sessions; origin++) {
     const training = observations.slice(0, origin + 1);
     const lastPrice = observations[origin].close;
     const actual = observations[origin + sessions].close;
+    if (
+      observations
+        .slice(origin, origin + sessions + 1)
+        .some((row) => row.qualityExcluded)
+    ) {
+      qualityExcludedSamples++;
+      continue;
+    }
     const point = project(lastPrice, fit(training, marketRows), sessions);
     errors.push((Math.abs(point.estimatedClose - actual) / actual) * 100);
     naiveErrors.push((Math.abs(lastPrice - actual) / actual) * 100);
@@ -381,9 +738,15 @@ function backtest(
   }
   const error = average(errors);
   const naive = average(naiveErrors);
+  if (!errors.length)
+    throw new ForecastDataError(
+      'No eligible backtest samples remain after excluding flagged intraday reversals.'
+    );
   return {
     horizonSessions: sessions,
     samples: errors.length,
+    qualityExcludedSamples,
+    unscoredEligibleSamples: 0,
     meanAbsolutePercentageError: round(error, 4),
     naiveMeanAbsolutePercentageError: round(naive, 4),
     directionalAccuracyPct: round((hits / errors.length) * 100),
@@ -395,14 +758,126 @@ function backtest(
 
 export class ForecastApi {
   constructor(
-    private historical: Pick<HistoricalApi, 'fetchEquityHistoricalData'>,
+    private historical: Pick<HistoricalApi, 'fetchEquityHistoricalData'> &
+      Partial<Pick<HistoricalApi, 'fetchHistoricalFnoData'>>,
     private now: () => Date = () => new Date(),
     private contextProvider?: ForecastContextProvider,
     private trainingOptions: {
       newsArchivePath?: string;
+      fnoArchiveDir?: string;
       scorer?: SentimentScorer;
-    } = {}
+    } = {},
+    private walkForwardStepMonths = 6,
+    private corporateActionProvider?: (
+      symbol: string,
+      from: string,
+      to: string
+    ) => Promise<Record<string, unknown>[]>,
+    private readonly _optionsApi?: OptionsApi
   ) {}
+
+  async forecastProbabilitySnapshotForBenchmark(params: {
+    symbol: string;
+    historyMonths?: number;
+  }): Promise<ForecastProbabilitySnapshot> {
+    const events = benchmarkProbabilityEvents.get(this);
+    if (!events?.length)
+      throw new ForecastInputError(
+        'Configure probability events before requesting a benchmark snapshot.'
+      );
+    if (
+      !params ||
+      typeof params.symbol !== 'string' ||
+      !/^[A-Z0-9&._-]{1,30}$/i.test(params.symbol.trim())
+    )
+      throw new ForecastInputError('Provide a valid NSE stock symbol.');
+    const historyMonths =
+      params.historyMonths ?? FORECAST_HISTORY_MONTH_LIMITS.defaultMonths;
+    if (
+      !Number.isInteger(historyMonths) ||
+      historyMonths < FORECAST_HISTORY_MONTH_LIMITS.minMonths ||
+      historyMonths > FORECAST_HISTORY_MONTH_LIMITS.maxMonths
+    )
+      throw new ForecastInputError(
+        `historyMonths must be a whole number from ${FORECAST_HISTORY_MONTH_LIMITS.minMonths} to ${FORECAST_HISTORY_MONTH_LIMITS.maxMonths}.`
+      );
+    if (!this.corporateActionProvider)
+      throw new ForecastDataError(
+        'A corporate-action provider is required for probability benchmark snapshots.'
+      );
+
+    const symbol = params.symbol.trim().toUpperCase();
+    const now = this.now();
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(now);
+    const part = (type: string) =>
+      parts.find((item) => item.type === type)!.value;
+    const today = `${part('year')}-${part('month')}-${part('day')}`;
+    const requestedFrom = addCalendarMonths(today, -historyMonths);
+    const rows = await this.historical.fetchEquityHistoricalData({
+      symbol,
+      from_date: new Date(`${requestedFrom}T12:00:00`),
+      to_date: new Date(`${today}T12:00:00`),
+      series: ['EQ'],
+    });
+    const corporateActionRows = await this.corporateActionProvider(
+      symbol,
+      requestedFrom,
+      today
+    );
+    const {
+      observations,
+      dataQuality,
+    } = normalizeForecastHistoricalRows(
+      rows,
+      requestedFrom,
+      today,
+      symbol,
+      corporateActionRows
+    );
+    if (
+      observations.length < 600 ||
+      observations[0].date >
+        new Date(Date.parse(requestedFrom) + 45 * DAY)
+          .toISOString()
+          .slice(0, 10)
+    )
+      throw new ForecastDataError(
+        `Insufficient ${historyMonths}-month history: at least 600 daily closes spanning the requested window are required.`
+      );
+    const last = observations[observations.length - 1];
+    if (last.qualityExcluded)
+      throw new ForecastDataError(
+        'The latest historical candle is flagged as an intraday reversal; a probability snapshot cannot use it as the current price.'
+      );
+    const age =
+      (Date.parse(today) - Date.parse(last.date)) / DAY;
+    if (age > 10)
+      throw new ForecastDataError(
+        `History is stale: the last close is ${last.date}.`
+      );
+    const historyEndExclusive = new Date(
+      Date.parse(`${today}T00:00:00Z`) + DAY
+    ).toISOString().slice(0, 10);
+    const predictions = trainCurrentProbabilitySnapshot(
+      observations,
+      events,
+      historyEndExclusive
+    );
+    return {
+      symbol,
+      originDate: last.date,
+      generatedAt: now.toISOString(),
+      requestedMonths: historyMonths,
+      lastClose: last.close,
+      dataQuality,
+      predictions,
+    };
+  }
 
   async forecastStock(params: ForecastParams): Promise<ForecastResult> {
     if (
@@ -411,11 +886,26 @@ export class ForecastApi {
       !/^[A-Z0-9&._-]{1,30}$/i.test(params.symbol.trim())
     )
       throw new ForecastInputError('Provide a valid NSE stock symbol.');
+    const historyMonths = params.historyMonths ?? FORECAST_HISTORY_MONTH_LIMITS.defaultMonths;
+    if (!Number.isInteger(historyMonths) ||
+        historyMonths < FORECAST_HISTORY_MONTH_LIMITS.minMonths ||
+        historyMonths > FORECAST_HISTORY_MONTH_LIMITS.maxMonths)
+      throw new ForecastInputError(
+        `historyMonths must be a whole number from ${FORECAST_HISTORY_MONTH_LIMITS.minMonths} to ${FORECAST_HISTORY_MONTH_LIMITS.maxMonths}.`
+      );
     const symbol = params.symbol.trim().toUpperCase();
     const selectedModel = params.model ?? 'baseline';
-    if (!['baseline', 'technical', 'technical_finbert'].includes(selectedModel))
+    if (
+      ![
+        'baseline',
+        'technical',
+        'technical_finbert',
+        'technical_fno',
+        'technical_futures',
+      ].includes(selectedModel)
+    )
       throw new ForecastInputError(
-        'model must be baseline, technical or technical_finbert.'
+        'model must be baseline, technical, technical_finbert, technical_fno or technical_futures.'
       );
     if (
       params.sentiment !== undefined &&
@@ -484,10 +974,10 @@ export class ForecastApi {
       : new Date(`${today}T00:00:00Z`);
     const to = new Date(anchor.getTime() - (forecastRange ? DAY : 0));
     const requestedTo = to.toISOString().slice(0, 10);
-    const from = new Date(anchor);
-    from.setUTCFullYear(from.getUTCFullYear() - 3);
-    if (from.getUTCMonth() !== anchor.getUTCMonth()) from.setUTCDate(0);
-    const requestedFrom = from.toISOString().slice(0, 10);
+    const requestedFrom = addCalendarMonths(
+      anchor.toISOString().slice(0, 10),
+      -historyMonths
+    );
     let archive: Awaited<ReturnType<typeof loadFinBertArchive>> | undefined;
     if (selectedModel === 'technical_finbert') {
       try {
@@ -509,25 +999,101 @@ export class ForecastApi {
       to_date: new Date(`${requestedTo}T12:00:00`),
       series: ['EQ'],
     });
-    if (!Array.isArray(rows))
-      throw new ForecastDataError(
-        'Historical API did not return daily price rows.'
-      );
-    const { observations, discardedRows } = normalize(
+    const corporateActionRows = this.corporateActionProvider
+      ? await this.corporateActionProvider(symbol, requestedFrom, requestedTo)
+      : undefined;
+    const {
+      observations,
+      discardedRows,
+      dataQuality,
+      corporateActionAdjustments,
+    } = normalizeForecastHistoricalRows(
       rows,
       requestedFrom,
       requestedTo < today ? requestedTo : today,
-      symbol
+      symbol,
+      corporateActionRows
     );
+    const wantsFno =
+      params.includeFno === true || selectedModel === 'technical_fno';
+    if (wantsFno) {
+      if (!this.trainingOptions.fnoArchiveDir)
+        throw new ForecastDataError(
+          'Historical F&O archive directory is not configured; set forecastTraining.fnoArchiveDir to a folder containing SYMBOL.csv files.'
+        );
+      try {
+        const fnoData = await loadHistoricalFnoArchive(
+          this.trainingOptions.fnoArchiveDir,
+          symbol,
+          observations,
+          benchmarkFnoArchiveOptions.get(this)
+        );
+        observations.forEach((observation, index) => {
+          const features = getFnoFeaturesForObservation(
+            observations,
+            index,
+            fnoData,
+            benchmarkFnoFeatureLookbacks.get(this)
+          );
+          const includedFeatures = benchmarkFnoFeatureSets.get(this);
+          if (features && includedFeatures) {
+            for (const name of FNO_FEATURE_NAMES)
+              if (!includedFeatures.has(name)) features[name] = 0;
+          }
+          observation.fnoFeatures = features;
+        });
+      } catch (error) {
+        throw new ForecastDataError(
+          error instanceof Error
+            ? `Historical F&O archive could not be loaded: ${error.message}`
+            : 'Historical F&O archive could not be loaded.'
+        );
+      }
+    }
+    if (selectedModel === 'technical_futures') {
+      if (!this.historical.fetchHistoricalFnoData)
+        throw new ForecastDataError(
+          'Historical futures data is not available from the configured NSE API client.'
+        );
+      try {
+        const futuresHistory = await fetchHistoricalFuturesObservations(
+          symbol,
+          this.historical,
+          observations,
+          new Date(`${requestedFrom}T12:00:00`),
+          new Date(`${requestedTo}T12:00:00`)
+        );
+        for (const observation of observations) {
+          observation.futuresFeatures = getFuturesFeaturesForObservation(
+            futuresHistory,
+            observation.date
+          );
+        }
+      } catch (error) {
+        throw new ForecastDataError(
+          error instanceof Error
+            ? `Historical futures data could not be prepared: ${error.message}`
+            : 'Historical futures data could not be prepared.'
+        );
+      }
+    }
+    dataQuality.corporateActionAdjustment = corporateActionRows
+      ? 'applied'
+      : 'not applied by forecast';
+    dataQuality.corporateActionAdjustments = corporateActionAdjustments;
     if (
       observations.length < 600 ||
       observations[0].date >
-        new Date(from.getTime() + 45 * DAY).toISOString().slice(0, 10)
+        new Date(Date.parse(requestedFrom) + 45 * DAY).toISOString().slice(0, 10)
     )
       throw new ForecastDataError(
-        'Insufficient three-year history: at least 600 daily closes spanning the requested window are required.'
+        `Insufficient ${historyMonths}-month history: at least 600 daily closes spanning the requested window are required.`
       );
     const last = observations[observations.length - 1];
+    if (last.qualityExcluded)
+      throw new ForecastDataError(
+        'The latest historical candle is flagged as an intraday reversal; a forecast cannot use it as the current price.'
+      );
     const age =
       (to.getTime() - new Date(`${last.date}T00:00:00Z`).getTime()) / DAY;
     if (age > 10)
@@ -634,8 +1200,37 @@ export class ForecastApi {
             toExclusive: new Date(to.getTime() + DAY)
               .toISOString()
               .slice(0, 10),
-          }
+          },
+          this.walkForwardStepMonths,
+          benchmarkFeatureSets.get(this) ??
+            (selectedModel === 'technical_futures'
+              ? 'technical_futures'
+              : params.includeFno || selectedModel === 'technical_fno'
+                ? 'technical_fno'
+                : undefined),
+          marketRows,
+          corporateActionAdjustments.map((action) => action.exDate),
+          benchmarkProbabilityEvents.get(this),
+          benchmarkTrainingWindows.get(this)?.trainMonths,
+          benchmarkTrainingWindows.get(this)?.foldAnchorTrainMonths
         );
+        const observationIndexes = new Map(
+          observations.map((row, index) => [row.date, index])
+        );
+        trained.training.outOfSampleForecasts =
+          trained.training.outOfSampleForecasts.map((prediction) => {
+            const originIndex = observationIndexes.get(prediction.originDate);
+            if (originIndex === undefined)
+              throw new ForecastDataError('A backtest origin is missing from price history.');
+            const baseline = fit(
+              observations.slice(0, originIndex + 1),
+              marketRows
+            );
+            return {
+              ...prediction,
+              baselinePredictedLogReturn: baseline.drift * prediction.horizon,
+            };
+          });
         forecast = forecast.map((point) => {
           const prediction = trained!.points.find(
             (item) => item.sessions === point.tradingSession
@@ -688,7 +1283,9 @@ export class ForecastApi {
         : 'uncertain';
     const warnings = [
       'Experimental statistical estimate, not investment advice or a reliable trading signal. Future prices can move in either direction.',
-      'Daily closes may be unadjusted for splits, bonuses and dividends. Fundamentals, liquidity and intraday prices are not modeled.',
+      dataQuality.corporateActionAdjustment === 'applied'
+        ? 'Recognized split and bonus share factors were applied to historical OHLC prices; dividends and other corporate actions are not adjusted. Fundamentals, liquidity and intraday prices are not modeled.'
+        : 'NSE historical closes are not adjusted by this forecast for corporate actions; known split and bonus events can create nominal-price jumps. Fundamentals, liquidity and intraday prices are not modeled.',
       forecastRange
         ? 'Custom dates are weekday estimates. Weekends are excluded, but exchange holidays are not modeled; holiday dates may appear and session offsets are approximate.'
         : 'Week means five future trading sessions, not seven calendar days. No future calendar dates are inferred.',
@@ -730,6 +1327,14 @@ export class ForecastApi {
       warnings.push(
         `${discardedRows} invalid, duplicate or out-of-window rows were excluded.`
       );
+    if (dataQuality.intradayReversalCandles.length)
+      warnings.push(
+        `${dataQuality.intradayReversalCandles.length} intraday reversal candles were retained in raw history but excluded from affected training and evaluation samples.`
+      );
+    if (dataQuality.ohlcUnavailableRows)
+      warnings.push(
+        `${dataQuality.ohlcUnavailableRows} historical rows lacked valid OHLC values and could not be screened for intraday reversals.`
+      );
     if (age > 4) warnings.push(`The latest close is ${age} calendar days old.`);
     if (!evaluation.beatsNaive)
       warnings.push(
@@ -769,12 +1374,14 @@ export class ForecastApi {
         : {}),
       lastClose: { date: last.date, price: last.close },
       history: {
+        requestedMonths: historyMonths,
         requestedFrom,
         requestedTo,
         firstDate: observations[0].date,
         lastDate: last.date,
         observations: observations.length,
         discardedRows,
+        dataQuality,
       },
       model: {
         name: trained

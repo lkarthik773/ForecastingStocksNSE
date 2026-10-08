@@ -110,6 +110,7 @@ describe('API explorer', () => {
       horizon: 'custom',
       start_date: '2026-10-05',
       end_date: '2026-10-11',
+      historyMonths: 60,
     };
     expect((await request(input)).status).toBe(200);
     expect(forecastStock).toHaveBeenCalledWith(input);
@@ -147,6 +148,8 @@ describe('API explorer', () => {
     expect((await request({ symbol: 'TCS', horizon: 'month' })).status).toBe(
       400
     );
+    expect((await request({ symbol: 'TCS', historyMonths: 35 })).status).toBe(400);
+    expect((await request({ symbol: 'TCS', historyMonths: 121 })).status).toBe(400);
     expect((await request({})).status).toBe(400);
     forecastStock.mockRejectedValueOnce(
       new ForecastInputError('Invalid stock symbol')
@@ -165,6 +168,7 @@ describe('API explorer', () => {
     const input = {
       symbol: 'TCS',
       horizon: 'week',
+      historyMonths: 60,
       context: 'auto',
       model: 'technical',
       sentiment: 'finbert',

@@ -16,7 +16,10 @@ export interface NSEOptions {
   server?: boolean;
   timeout?: number;
   forecastContext?: { finbertCacheDir?: string; newsArchivePath?: string } | false;
-  forecastTraining?: { newsArchivePath?: string };
+  forecastTraining?: {
+    newsArchivePath?: string;
+    fnoArchiveDir?: string;
+  };
 }
 
 export interface ActionParams {

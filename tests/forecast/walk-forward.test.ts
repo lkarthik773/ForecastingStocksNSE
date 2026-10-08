@@ -35,6 +35,45 @@ describe('calendar-month rolling train/test split', () => {
     ]);
   });
 
+  it('supports a separate three-month advance with contiguous test windows', () => {
+    const folds = rollingFolds(dates(), '2023-10-05', '2026-10-05', 5, 3);
+    expect(folds).toHaveLength(7);
+    for (let index = 0; index + 1 < folds.length; index++)
+      expect(folds[index].testEndExclusive).toBe(folds[index + 1].testStart);
+  });
+
+  it('keeps test windows identical for 8, 14 and 20-month training windows', () => {
+    const history = dates();
+    const historyStart = '2023-10-05';
+    const windows = [8, 14, 20].map((trainMonths) => {
+      const foldStart = addCalendarMonths(historyStart, 20 - trainMonths);
+      return rollingFolds(
+        history,
+        foldStart,
+        '2026-10-05',
+        5,
+        6,
+        trainMonths
+      );
+    });
+    const testWindows = windows.map((folds) =>
+      folds.map((fold) => [fold.testStart, fold.testEndExclusive])
+    );
+
+    expect(testWindows[1]).toEqual(testWindows[0]);
+    expect(testWindows[2]).toEqual(testWindows[0]);
+    expect(windows.map((folds) => folds[0].trainStart)).toEqual([
+      '2024-10-05',
+      '2024-04-05',
+      '2023-10-05',
+    ]);
+    expect(windows.map((folds) => folds[0].trainEndExclusive)).toEqual([
+      '2025-06-05',
+      '2025-06-05',
+      '2025-06-05',
+    ]);
+  });
+
   it('purges labels crossing train/test boundaries and uses only actual observed targets', () => {
     const history = dates();
     for (const fold of rollingFolds(history, '2023-10-05', '2026-10-05', 5)) {

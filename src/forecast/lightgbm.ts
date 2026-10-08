@@ -92,7 +92,7 @@ export function runLightGbm(
           new Error(
             diagnostic.includes('ModuleNotFoundError')
               ? 'Python is missing LightGBM dependencies. Run npm run setup:lightgbm.'
-              : 'LightGBM subprocess failed. Check the configured Python environment.'
+              : `LightGBM subprocess failed. Check the configured Python environment.${diagnostic ? ` ${diagnostic.trim()}` : ''}`
           )
         );
         return;

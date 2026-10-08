@@ -8,6 +8,9 @@ import { loadKiteConfig, type KiteConfig } from '../../src/kite/index.js';
 import { createKiteServer, type AccountReader } from '../../apps/kite/server.js';
 import { readKiteAccount, kiteReadPaths } from '../../src/kite/client.js';
 import { KiteLoginFlow, exchangeKiteToken, type TokenExchanger } from '../../src/kite/auth.js';
+import { assessKitePreview, parseKitePreviewRequest } from '../../src/kite/preview.js';
+import type { ForecastResult } from '../../src/forecast/forecast-api.js';
+import type { ForecastProvider } from '../../apps/kite/server.js';
 
 vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn(), isAxiosError: vi.fn() } }));
 
@@ -18,6 +21,115 @@ const user = {
   kiteAccessToken: 'mock_access',
 };
 const environment = () => ({ KITE_USERS_JSON: JSON.stringify([user]) });
+const previewClock = new Date('2026-10-06T10:10:00.000Z');
+const currentIndiaDate = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+}).format(new Date());
+
+function previewForecast(overrides: Partial<ForecastResult> = {}): ForecastResult {
+  return {
+    symbol: 'TCS',
+    exchange: 'NSE',
+    currency: 'INR',
+    horizon: 'next_day',
+    generatedAt: new Date(Date.now() - 60_000).toISOString(),
+    lastClose: { date: currentIndiaDate(), price: 3500 },
+    history: {
+      requestedMonths: 60,
+      requestedFrom: '2023-10-01',
+      requestedTo: '2026-10-05',
+      firstDate: '2023-10-01',
+      lastDate: '2026-10-06',
+      observations: 700,
+      discardedRows: 0,
+      dataQuality: {
+        rawRows: 700,
+        duplicateRows: 0,
+        invalidRows: 0,
+        outOfRangeRows: 0,
+        nonEquityRows: 0,
+        ohlcUnavailableRows: 0,
+        intradayReversalThresholds: {
+          minRangePctOfOpen: 10,
+          maxBodyPctOfRange: 50,
+        },
+        intradayReversalCandles: [],
+        largeDailyChanges: [],
+        calendarIntervalsOverFourDays: 0,
+        maxCalendarIntervalDays: 3,
+        corporateActionAdjustment: 'not applied by forecast',
+        corporateActionAdjustments: [],
+      },
+    },
+    model: {
+      name: 'LightGBM rolling technical-indicator model',
+      dailyDriftPct: 0.1,
+      dailyVolatilityPct: 1,
+      intervalAssumptions: 'test',
+    },
+    analysis: { sma20: 3500, sma50: 3400 },
+    forecast: [],
+    summary: {
+      estimatedDirection: 'up',
+      signal: 'up',
+      expectedChangePct: 1,
+      reason: 'test',
+    },
+    backtest: {
+      horizonSessions: 1,
+      samples: 45,
+      qualityExcludedSamples: 0,
+      unscoredEligibleSamples: 0,
+      meanAbsolutePercentageError: 2,
+      naiveMeanAbsolutePercentageError: 3,
+      directionalAccuracyPct: 60,
+      intervalCoveragePct: 90,
+      beatsNaive: true,
+      includesNews: false,
+    },
+    context: {
+      asOf: '2026-10-06T10:00:00.000Z',
+      market: {
+        provider: 'NSE',
+        proxy: 'NIFTYBEES',
+        status: 'available',
+        observations: 10,
+        applied: false,
+        beta: null,
+        recentChange5Pct: null,
+        volatilityRatio: null,
+        dailyDriftAdjustmentPct: 0,
+      },
+      news: {
+        provider: 'Local archive',
+        status: 'not_configured',
+        scope: 'TCS',
+        requestedFrom: '2026-09-22',
+        requestedTo: '2026-10-05',
+        articles: [],
+        scoredArticles: 0,
+        averagePolarity: null,
+        todayArticles: 0,
+        sampleLimited: false,
+      },
+      newsVarianceMultiplier: 1,
+      elevatedRisk: false,
+      warnings: [],
+    },
+    warnings: ['Forecast is experimental.'],
+    ...overrides,
+  };
+}
+const validPreviewRequest = {
+  symbol: 'TCS',
+  side: 'BUY' as const,
+  quantity: 2,
+  limitPrice: 3500,
+  horizon: 'next_day' as const,
+};
 
 describe('Kite read-only configuration', () => {
   it('defaults to local binding and the official API', () => {
@@ -56,14 +168,20 @@ describe('Kite read-only HTTP service', () => {
   const servers: Server[] = [];
   const secondUser = { ...user, username: 'bob', apiToken: 'b'.repeat(43), kiteAccessToken: 'bob_access' };
   const config = () => loadKiteConfig({ KITE_USERS_JSON: JSON.stringify([user, secondUser]) });
-  async function start(reader: AccountReader, hosted = false, exchanger?: TokenExchanger, modify?: (settings: KiteConfig) => void) {
+  async function start(
+    reader: AccountReader,
+    hosted = false,
+    exchanger?: TokenExchanger,
+    modify?: (settings: KiteConfig) => void,
+    forecastProvider?: ForecastProvider
+  ) {
     const settings = config();
     if (hosted) {
       settings.publicOrigin = 'https://kite.example.com';
       settings.redirectUrl = 'https://kite.example.com/auth/kite/callback';
     }
     modify?.(settings);
-    const server = createKiteServer(settings, reader, exchanger);
+    const server = createKiteServer(settings, reader, exchanger, forecastProvider);
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -106,13 +224,16 @@ describe('Kite read-only HTTP service', () => {
     expect(document.openapi).toBe('3.0.3');
     expect(document.security).toEqual([{ serviceBearer: [] }]);
     expect(Object.keys(document.paths)).toContain('/api/kite/connection');
-    expect(Object.values(document.paths).every((path) => Object.keys(path as object).join() === 'get')).toBe(true);
+    expect(Object.keys(document.paths['/api/kite/preview'])).toEqual(['post']);
+    expect(Object.entries(document.paths)
+      .filter(([path]) => path !== '/api/kite/preview')
+      .every(([, path]) => Object.keys(path as object).join() === 'get')).toBe(true);
     const serialized = JSON.stringify(document);
     for (const secret of [user.apiToken, user.kiteApiKey, user.kiteAccessToken, secondUser.apiToken])
       expect(serialized).not.toContain(secret);
     const init = await (await fetch(`${base}/docs/init.js`)).text();
     expect(init).toContain('persistAuthorization: false');
-    expect(init).toContain("supportedSubmitMethods: ['get']");
+    expect(init).toContain("supportedSubmitMethods: ['get', 'post']");
     expect((await fetch(`${base}/docs/swagger-ui.css`)).status).toBe(200);
     expect((await fetch(`${base}/docs/swagger-ui-bundle.js`)).status).toBe(200);
     expect((await fetch(`${base}/api/kite/connection`)).status).toBe(401);
@@ -125,6 +246,94 @@ describe('Kite read-only HTTP service', () => {
     const response = await fetch(`${base}/api/kite/orders`, { method, headers: { Authorization: `Bearer ${user.apiToken}` } });
     expect(response.status).toBe(405);
     expect(reader).not.toHaveBeenCalled();
+  });
+
+  it('builds an authenticated forecast-gated preview without contacting Kite', async () => {
+    const reader = vi.fn();
+    const provider = vi.fn(async () => previewForecast());
+    const base = await start(reader, false, undefined, undefined, provider);
+    const response = await fetch(`${base}/api/kite/preview`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${user.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(validPreviewRequest),
+    });
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result).toMatchObject({
+      eligible: true,
+      mode: 'HOLD',
+      tradingEnabled: false,
+      data: {
+        previewOnly: true,
+        order: {
+          symbol: 'TCS',
+          transactionType: 'BUY',
+          product: 'CNC',
+          orderType: 'LIMIT',
+          quantity: 2,
+          limitPrice: 3500,
+          estimatedNotionalInr: 7000,
+        },
+      },
+    });
+    expect(provider).toHaveBeenCalledWith({
+      symbol: 'TCS',
+      horizon: 'next_day',
+      model: 'technical',
+      context: 'auto',
+      sentiment: 'off',
+    });
+    expect(reader).not.toHaveBeenCalled();
+    expect((await fetch(`${base}/api/kite/preview`, {
+      headers: { Authorization: `Bearer ${user.apiToken}` },
+    })).status).toBe(405);
+    expect((await fetch(`${base}/api/kite/orders`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${user.apiToken}` },
+    })).status).toBe(405);
+  });
+
+  it('rejects invalid preview bodies and blocks forecasts failing safety gates', async () => {
+    const reader = vi.fn();
+    const provider = vi.fn(async () => previewForecast({
+      backtest: { ...previewForecast().backtest, beatsNaive: false },
+    }));
+    const base = await start(reader, false, undefined, undefined, provider);
+    const headers = {
+      Authorization: `Bearer ${user.apiToken}`,
+      'Content-Type': 'application/json',
+    };
+    expect((await fetch(`${base}/api/kite/preview`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ ...validPreviewRequest, quantity: 0 }),
+    })).status).toBe(400);
+    const blocked = await fetch(`${base}/api/kite/preview`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(validPreviewRequest),
+    });
+    expect(blocked.status).toBe(422);
+    expect(await blocked.json()).toMatchObject({
+      eligible: false,
+      mode: 'HOLD',
+      tradingEnabled: false,
+      blockedReasons: ['Forecast must beat the no-change backtest baseline.'],
+      forecast: {
+        signal: 'up',
+        estimatedDirection: 'up',
+        backtest: {
+          beatsNaive: false,
+          samples: 45,
+          directionalAccuracyPct: 60,
+        },
+      },
+    });
+    expect(reader).not.toHaveBeenCalled();
+    expect(provider).toHaveBeenCalledTimes(1);
   });
 
   it('rejects identity overrides and unknown paths', async () => {
@@ -269,6 +478,68 @@ describe('Kite REST reads', () => {
       proxy: false,
       timeout: 10000,
     }));
+  });
+
+  describe('Kite order preview gates', () => {
+    it('parses only supported fields and normalizes the symbol', () => {
+      expect(parseKitePreviewRequest({
+        symbol: ' tcs ',
+        side: 'BUY',
+        quantity: 2,
+        limitPrice: 3500,
+      })).toEqual(validPreviewRequest);
+      expect(() => parseKitePreviewRequest({ ...validPreviewRequest, account: 'bob' }))
+        .toThrow('unsupported fields');
+    });
+
+    it('returns a preview only when signal, quality, freshness, risk and notional gates pass', () => {
+      const result = assessKitePreview(validPreviewRequest, previewForecast({
+        generatedAt: '2026-10-06T10:00:00.000Z',
+        lastClose: { date: '2026-10-06', price: 3500 },
+      }), previewClock);
+      expect(result.eligible).toBe(true);
+      expect(result.preview?.tradingEnabled).toBe(false);
+      expect(result.preview?.order.estimatedNotionalInr).toBe(7000);
+    });
+
+    it('supports a sell preview only when the forecast points down', () => {
+      const result = assessKitePreview(
+        { ...validPreviewRequest, side: 'SELL' },
+        previewForecast({
+          generatedAt: '2026-10-06T10:00:00.000Z',
+          lastClose: { date: '2026-10-06', price: 3500 },
+          summary: {
+            ...previewForecast().summary,
+            signal: 'down',
+            estimatedDirection: 'down',
+            expectedChangePct: -1,
+          },
+        }),
+        previewClock
+      );
+      expect(result.eligible).toBe(true);
+      expect(result.preview?.order.transactionType).toBe('SELL');
+    });
+
+    it('lists failed gates instead of returning a preview', () => {
+      const result = assessKitePreview(
+        { ...validPreviewRequest, quantity: 3 },
+        previewForecast({
+          generatedAt: '2026-10-06T09:00:00.000Z',
+          summary: { ...previewForecast().summary, signal: 'down' },
+          context: { ...previewForecast().context!, elevatedRisk: true },
+        }),
+        previewClock
+      );
+      expect(result.eligible).toBe(false);
+      expect(result.preview).toBeUndefined();
+      expect(result.blockedReasons).toEqual(expect.arrayContaining([
+        'Estimated notional must not exceed INR 10000.',
+        'Forecast must be less than 15 minutes old and must not be future-dated.',
+        'Forecast signal and estimated direction must both match the requested side.',
+        'A clear forecast risk assessment is required; elevated or unavailable risk blocks previews.',
+      ]));
+    });
   });
 
   it('removes credential fields while preserving instrument tokens', async () => {

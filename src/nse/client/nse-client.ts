@@ -11,6 +11,7 @@ import { CorporateApi } from "../api/corporate-api.js";
 import { IpoApi } from "../api/ipo-api.js";
 import { MarketApi } from "../api/market-api.js";
 import { DownloadApi } from "../api/download-api.js";
+import { resolve } from "node:path";
 
 import { getPath } from "../utils/file-operations.js";
 import { DEFAULT_TIMEOUT } from "../constants/index.js";
@@ -57,9 +58,13 @@ export class NSEClient {
     this.equity = new EquityApi(this.httpClient);
     this.options = new OptionsApi(this.httpClient);
     this.historical = new HistoricalApi(this.httpClient);
-    const scorer = new FinBertScorer(opts.forecastContext === false ? undefined : opts.forecastContext?.finbertCacheDir);
-    this.forecast = new ForecastApi(this.historical, undefined, opts.forecastContext === false ? undefined : new ForecastContextApi(this.historical, { ...opts.forecastContext, newsArchivePath: opts.forecastTraining?.newsArchivePath ?? opts.forecastContext?.newsArchivePath }, undefined, scorer), { newsArchivePath: opts.forecastTraining?.newsArchivePath, scorer });
     this.corporate = new CorporateApi(this.httpClient);
+    const scorer = new FinBertScorer(opts.forecastContext === false ? undefined : opts.forecastContext?.finbertCacheDir);
+    this.forecast = new ForecastApi(this.historical, undefined, opts.forecastContext === false ? undefined : new ForecastContextApi(this.historical, { ...opts.forecastContext, newsArchivePath: opts.forecastTraining?.newsArchivePath ?? opts.forecastContext?.newsArchivePath }, undefined, scorer), { newsArchivePath: opts.forecastTraining?.newsArchivePath, fnoArchiveDir: opts.forecastTraining?.fnoArchiveDir ?? resolve(process.cwd(), "downloads"), scorer }, 6, async (symbol, from, to) => this.corporate.getActions({
+      symbol,
+      from_date: new Date(`${from}T12:00:00`),
+      to_date: new Date(`${to}T12:00:00`),
+    }), this.options);
     this.ipo = new IpoApi(this.httpClient);
     this.market = new MarketApi(this.httpClient);
     this.download = new DownloadApi(this.httpClient, this.downloadDir);

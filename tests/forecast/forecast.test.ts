@@ -8,7 +8,7 @@ function history(drift = 0.001, noise = 0) {
   const rows: Record<string, unknown>[] = [];
   let price = 100;
   for (
-    const date = new Date('2023-10-05T00:00:00Z');
+    const date = new Date('2021-10-05T00:00:00Z');
     date < NOW;
     date.setUTCDate(date.getUTCDate() + 1)
   ) {
@@ -34,20 +34,117 @@ describe('stock forecast', () => {
     expect(NseForecastApi).toBe(ForecastApi);
   });
 
-  it('runs the three-year LightGBM API with the requested rolling fold schedule', async () => {
+  it('applies parsed split and bonus actions when a provider is configured', async () => {
+    const actionProvider = vi.fn().mockResolvedValue([
+      {
+        symbol: 'TCS',
+        exDate: '01-Jan-2025',
+        subject: 'Bonus 1:1',
+      },
+    ]);
+    const api = new ForecastApi(
+      { fetchEquityHistoricalData: vi.fn().mockResolvedValue(history()) },
+      () => NOW,
+      undefined,
+      {},
+      6,
+      actionProvider
+    );
+
+    const result = await api.forecastStock({ symbol: 'TCS', model: 'baseline' });
+
+    expect(actionProvider).toHaveBeenCalledWith(
+      'TCS',
+      '2021-10-05',
+      '2026-10-05'
+    );
+    expect(result.history.dataQuality.corporateActionAdjustment).toBe('applied');
+    expect(result.history.dataQuality.corporateActionAdjustments).toEqual([
+      {
+        exDate: '2025-01-01',
+        subject: 'Bonus 1:1',
+        shareFactor: 2,
+      },
+    ]);
+    expect(result.warnings.some((warning) => warning.includes('Recognized split and bonus'))).toBe(true);
+  });
+
+  it('does not silently fall back when the configured corporate action provider fails', async () => {
+    const api = new ForecastApi(
+      { fetchEquityHistoricalData: vi.fn().mockResolvedValue(history()) },
+      () => NOW,
+      undefined,
+      {},
+      6,
+      async () => {
+        throw new Error('Corporate actions unavailable.');
+      }
+    );
+
+    await expect(
+      api.forecastStock({ symbol: 'TCS', model: 'baseline' })
+    ).rejects.toThrow('Corporate actions unavailable.');
+  });
+
+  it('uses five years by default while keeping the requested rolling fold schedule', async () => {
     const result = await setup().api.forecastStock({
       symbol: 'TCS',
       model: 'technical',
       context: 'off',
     });
     expect(result.model.name).toContain('LightGBM');
-    expect(result.model.training?.folds).toHaveLength(4);
+    expect(result.history.requestedMonths).toBe(60);
+    expect(result.history.requestedFrom).toBe('2021-10-05');
+    expect(result.model.training?.folds).toHaveLength(8);
     expect(result.model.training?.trainMonths).toBe(14);
     expect(result.model.training?.testMonths).toBe(3);
     expect(result.model.training?.stepMonths).toBe(6);
     expect(result.model.training?.outOfSampleForecasts.length).toBeGreaterThan(
       200
     );
+    expect(result.model.training?.outOfSampleForecasts.every(
+      (prediction) => Number.isFinite(prediction.baselinePredictedLogReturn)
+    )).toBe(true);
+  });
+
+  it('allows a separate diagnostic forecast API to use contiguous three-month folds', async () => {
+    const { fetchEquityHistoricalData } = setup();
+    const diagnosticApi = new ForecastApi(
+      { fetchEquityHistoricalData },
+      () => NOW,
+      undefined,
+      {},
+      3
+    );
+    const result = await diagnosticApi.forecastStock({
+      symbol: 'TCS',
+      model: 'technical',
+      context: 'off',
+    });
+    expect(result.model.training?.stepMonths).toBe(3);
+    expect(result.model.training?.folds).toHaveLength(15);
+    expect(result.model.training?.folds.every(
+      (fold, index, folds) => index + 1 >= folds.length ||
+        fold.testEndExclusive === folds[index + 1].testStart
+    )).toBe(true);
+  });
+
+  it('allows callers to choose a supported historical lookback without changing fold lengths', async () => {
+    const { api, fetchEquityHistoricalData } = setup();
+    const result = await api.forecastStock({
+      symbol: 'TCS',
+      historyMonths: 36,
+      model: 'technical',
+      context: 'off',
+    });
+    expect(result.history.requestedMonths).toBe(36);
+    expect(result.history.requestedFrom).toBe('2023-10-05');
+    expect(result.model.training?.trainMonths).toBe(14);
+    expect(result.model.training?.testMonths).toBe(3);
+    expect(result.model.training?.stepMonths).toBe(6);
+    expect(fetchEquityHistoricalData).toHaveBeenCalledWith(expect.objectContaining({
+      from_date: new Date('2023-10-05T12:00:00'),
+    }));
   });
 
   it('rejects unconfigured joint training rather than silently returning another model', async () => {
@@ -160,7 +257,7 @@ describe('stock forecast', () => {
     });
     expect(fetchEquityHistoricalData).toHaveBeenCalledWith({
       symbol: 'TCS',
-      from_date: new Date('2023-10-05T12:00:00'),
+      from_date: new Date('2021-10-05T12:00:00'),
       to_date: new Date('2026-10-04T12:00:00'),
       series: ['EQ'],
     });
@@ -194,7 +291,7 @@ describe('stock forecast', () => {
     );
     const result = await setup(changed).api.forecastStock(input);
     expect(result.forecast).toEqual(baseline.forecast);
-    expect(result.history.requestedFrom).toBe('2023-09-28');
+    expect(result.history.requestedFrom).toBe('2021-09-28');
     expect(result.history.requestedTo).toBe('2026-09-27');
     expect(result.lastClose.date).toBe('2026-09-25');
   });
@@ -236,12 +333,12 @@ describe('stock forecast', () => {
     expect(fetchEquityHistoricalData).not.toHaveBeenCalled();
   });
 
-  it('fetches three calendar years of EQ history and defaults to one trading session', async () => {
+  it('fetches five calendar years of EQ history by default and defaults to one session', async () => {
     const { api, fetchEquityHistoricalData } = setup();
     const result = await api.forecastStock({ symbol: ' tcs ' });
     expect(fetchEquityHistoricalData).toHaveBeenCalledWith({
       symbol: 'TCS',
-      from_date: new Date('2023-10-05T12:00:00'),
+      from_date: new Date('2021-10-05T12:00:00'),
       to_date: new Date('2026-10-05T12:00:00'),
       series: ['EQ'],
     });
@@ -267,15 +364,121 @@ describe('stock forecast', () => {
 
   it('sorts, deduplicates and accepts the current NSE date format', async () => {
     const rows = history();
-    rows[0].mtimestamp = '05-Oct-2023';
+    rows[0].mtimestamp = '05-Oct-2021';
     const { api } = setup([
       ...rows.reverse(),
       rows[0],
       { mtimestamp: 'invalid', chClosingPrice: -1 },
+      { mtimestamp: '2020-01-01', chClosingPrice: 100 },
+      {
+        mtimestamp: '2022-01-03',
+        chClosingPrice: 100,
+        chSymbol: 'TCS',
+        chSeries: 'BE',
+      },
     ]);
     const result = await api.forecastStock({ symbol: 'TCS' });
-    expect(result.history.firstDate).toBe('2023-10-05');
-    expect(result.history.discardedRows).toBe(2);
+    expect(result.history.firstDate).toBe('2021-10-05');
+    expect(result.history.discardedRows).toBe(4);
+    expect(result.history.dataQuality.rawRows).toBe(rows.length + 4);
+    expect(result.history.dataQuality.invalidRows).toBe(1);
+    expect(result.history.dataQuality.outOfRangeRows).toBe(1);
+    expect(result.history.dataQuality.nonEquityRows).toBe(1);
+    expect(result.history.dataQuality.rawRows).toBe(
+      result.history.observations + result.history.discardedRows
+    );
+    expect(result.history.dataQuality).toMatchObject({
+      duplicateRows: 1,
+      corporateActionAdjustment: 'not applied by forecast',
+    });
+  });
+
+  it('reports suspicious price moves and long date intervals without labeling them as missing sessions', async () => {
+    const rows = history();
+    const reversal = rows.find((row) => row.mtimestamp === '2025-01-20')!;
+    const close = Number(reversal.chClosingPrice);
+    const open = close / 1.02;
+    reversal.chOpeningPrice = open;
+    reversal.chTradeHighPrice = open * 1.12;
+    reversal.chTradeLowPrice = open * 0.98;
+    const filteredRows = rows.filter(
+      (row) =>
+        String(row.mtimestamp) < '2022-01-10' ||
+        String(row.mtimestamp) > '2022-01-14'
+    );
+    const result = await setup(filteredRows).api.forecastStock({
+      symbol: 'TCS',
+      model: 'technical',
+      context: 'off',
+    });
+    expect(result.history.observations).toBe(filteredRows.length);
+    expect(result.history.dataQuality.largeDailyChanges).toHaveLength(0);
+    expect(
+      result.history.dataQuality.calendarIntervalsOverFourDays
+    ).toBe(1);
+    expect(result.history.dataQuality.maxCalendarIntervalDays).toBe(10);
+    expect(result.history.dataQuality.ohlcUnavailableRows).toBeGreaterThan(0);
+    expect(result.history.dataQuality.intradayReversalThresholds).toEqual({
+      minRangePctOfOpen: 10,
+      maxBodyPctOfRange: 50,
+    });
+    expect(result.history.dataQuality.intradayReversalCandles).toMatchObject([
+      { date: '2025-01-20', rangePctOfOpen: 14, bodyPctOfRange: 14.2857 },
+    ]);
+    expect(
+      result.model.training?.folds.some(
+        (fold) => fold.qualityExcludedTestRows > 0
+      )
+    ).toBe(true);
+    const flaggedIndex = rows.findIndex(
+      (row) => row.mtimestamp === '2025-01-20'
+    );
+    const dateIndexes = new Map(
+      rows.map((row, index) => [String(row.mtimestamp), index])
+    );
+    expect(
+      result.model.training!.outOfSampleForecasts.every((prediction) => {
+        const originIndex = dateIndexes.get(prediction.originDate)!;
+        return (
+          flaggedIndex < originIndex - 59 ||
+          flaggedIndex > originIndex + prediction.horizon
+        );
+      })
+    ).toBe(true);
+  });
+
+  it('excludes flagged recent outcomes from the baseline backtest', async () => {
+    const rows = history();
+    const reversal = rows.find((row) => row.mtimestamp === '2026-09-21')!;
+    const close = Number(reversal.chClosingPrice);
+    const open = close / 1.02;
+    reversal.chOpeningPrice = open;
+    reversal.chTradeHighPrice = open * 1.12;
+    reversal.chTradeLowPrice = open * 0.98;
+    const result = await setup(rows).api.forecastStock({
+      symbol: 'TCS',
+      model: 'baseline',
+      context: 'off',
+    });
+    expect(result.history.dataQuality.intradayReversalCandles).toHaveLength(1);
+    expect(result.backtest.qualityExcludedSamples).toBeGreaterThan(0);
+  });
+
+  it('does not forecast from a latest close flagged as an intraday reversal', async () => {
+    const rows = history();
+    const latest = rows.at(-1)!;
+    const close = Number(latest.chClosingPrice);
+    const open = close / 1.02;
+    latest.chOpeningPrice = open;
+    latest.chTradeHighPrice = open * 1.12;
+    latest.chTradeLowPrice = open * 0.98;
+    await expect(
+      setup(rows).api.forecastStock({
+        symbol: 'TCS',
+        model: 'baseline',
+        context: 'off',
+      })
+    ).rejects.toThrow('latest historical candle is flagged');
   });
 
   it('reports uncertainty for noisy and flat histories without fabricating confidence', async () => {
@@ -296,6 +499,9 @@ describe('stock forecast', () => {
   it('rejects invalid requests before fetching', async () => {
     const { api, fetchEquityHistoricalData } = setup();
     await expect(api.forecastStock({ symbol: '' })).rejects.toThrow('symbol');
+    for (const historyMonths of [35, 121, 36.5, Number.NaN])
+      await expect(api.forecastStock({ symbol: 'TCS', historyMonths }))
+        .rejects.toThrow('historyMonths');
     await expect(
       api.forecastStock({ symbol: 'TCS', horizon: 'month' as 'week' })
     ).rejects.toThrow('horizon');

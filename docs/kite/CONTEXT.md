@@ -4,7 +4,8 @@
 
 - Separate `kiteintegrationapi` service in this repository; keep the existing
   unauthenticated Explorer out of the broker-account path.
-- Immediate scope: HOLD, verify Kite connectivity and read account details only.
+- Immediate scope: HOLD, verify Kite connectivity, read account details and
+  generate gated previews only.
   No order placement, modification, cancellation, or automatic execution.
 - Intended deployment: hosted, multiple users. Each caller must be isolated to
   their own Kite connection. First stage uses administrator-provisioned secrets;
@@ -24,8 +25,9 @@
    credentials outside chat and verify connectivity without trading.
 4. User-bound Kite login/callback now implemented with process-local sessions;
   persistent encrypted storage and production identity remain pending.
-5. Add forecast-to-preview gating, risk limits, audit/reconciliation and manual
-   confirmation only after explicit approval to leave HOLD mode.
+5. Preview-only forecast gating and a per-preview INR risk cap are implemented.
+   Audit/reconciliation and manual confirmation remain future work; any order
+   placement requires explicit approval to leave HOLD mode.
 
 ## Starting Points
 
@@ -37,7 +39,7 @@
 
 ## Current Implementation
 
-- GET-only service: health/status/connection/profile/margins/holdings/positions/
+- Read API and preview service: health/status/connection/profile/margins/holdings/positions/
   existing orders/trades. Bearer authentication selects the user; no overrides.
 - Direct official REST reads using existing Axios; redirects/proxies disabled,
   finite timeout/response size, per-user throttling and sanitized failures.
@@ -45,10 +47,17 @@
   `npm run start:kite`, `npm run test:kite`, `npm run typecheck:kite`.
 - User confirmed Render (hostname undecided), no application identity provider
   yet, and an existing access token to configure locally outside chat.
-- Forecast integration is retained as future work, not invoked during HOLD.
+- Forecast integration is used only by the preview path during HOLD. It forces
+  the technical model and blocks unless the side matches the signal, backtest
+  beats naive with at least 30 samples and 55% directional accuracy, the
+  forecast is less than 15 minutes old, the close is at most 10 calendar days
+  old, context risk is explicitly clear, and notional is at most INR 10,000.
+- Previewing does not validate holdings availability, price tick-size, liquidity
+  or intraday conditions. No confirmation or order execution endpoint exists.
 - Public deployment is blocked pending identity/token-storage/hosting decisions.
   Setup and endpoint details live in `docs/kite/README.md`.
-- Added actual Swagger UI at `/docs` (also `/`) and GET-only `/openapi.json`.
+- Added actual Swagger UI at `/docs` (also `/`) and `/openapi.json`; account
+  reads remain GET-only and the sole POST operation is the preview endpoint.
   Authorize with the service apiToken; no embedded broker credentials or stored
   browser authorization. The NSE/BSE custom Explorer remains separate.
 - Fixed startup environment loading: the entry point loads `.env.kite` explicitly
@@ -61,7 +70,7 @@
 - Login installs access tokens only in process memory; no token responses or
   environment-file writes. Restart/expiry requires a new login. Swagger reload
   requires reauthorization. Callback requires the same browser and exact host.
-- Verification: 38 focused mocked tests and strict Kite typecheck pass. Live
+- Verification: 44 focused mocked tests and strict Kite typecheck pass. Live
   token exchange requires user-configured secret/client ID and portal redirect;
   no real broker exchange or trading has been performed by the agent.
 - User subsequently confirmed successful live login and account API reads.

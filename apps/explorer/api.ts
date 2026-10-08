@@ -1,4 +1,5 @@
 import type { NSE, BSE, ForecastParams } from '../../src/index.js';
+import { FORECAST_HISTORY_MONTH_LIMITS } from '../../src/forecast/forecast-api.js';
 
 export interface Field {
   name: string;
@@ -6,6 +7,9 @@ export interface Field {
   required?: boolean;
   example?: string;
   choices?: string[];
+  min?: number;
+  max?: number;
+  description?: string;
 }
 
 export interface Endpoint {
@@ -85,6 +89,14 @@ export function createEndpoints({
         { name: 'start_date', type: 'date' },
         { name: 'end_date', type: 'date' },
         {
+          name: 'historyMonths',
+          type: 'number',
+          example: String(FORECAST_HISTORY_MONTH_LIMITS.defaultMonths),
+          min: FORECAST_HISTORY_MONTH_LIMITS.minMonths,
+          max: FORECAST_HISTORY_MONTH_LIMITS.maxMonths,
+          description: 'Historical lookback in months (36–120); rolling folds remain fixed at 14/3/6 months.',
+        },
+        {
           name: 'context',
           type: 'string',
           choices: ['auto', 'off'],
@@ -121,6 +133,9 @@ export function createEndpoints({
             : {}),
           ...(params.end_date instanceof Date
             ? { end_date: calendarDate(params.end_date) }
+            : {}),
+          ...(typeof params.historyMonths === 'number'
+            ? { historyMonths: params.historyMonths }
             : {}),
         }),
     },
@@ -450,8 +465,12 @@ export function validateParams(
       params[field.name] = date;
     } else if (field.type === 'number') {
       const number = Number(text);
-      if (!Number.isSafeInteger(number) || number < 1)
-        throw new InputError(`${field.name} must be a positive integer.`);
+      if (!Number.isSafeInteger(number) ||
+          number < (field.min ?? 1) ||
+          (field.max !== undefined && number > field.max))
+        throw new InputError(
+          `${field.name} must be an integer from ${field.min ?? 1} to ${field.max ?? 'the maximum supported value'}.`
+        );
       params[field.name] = number;
     } else {
       params[field.name] = text;

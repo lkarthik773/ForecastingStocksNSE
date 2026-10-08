@@ -178,7 +178,8 @@ function select(endpoint) {
     } else {
       input.type = field.type === 'string' ? 'text' : field.type;
       if (field.type === 'number') {
-        input.min = '1';
+        input.min = String(field.min ?? 1);
+        if (field.max !== undefined) input.max = String(field.max);
         input.step = '1';
       }
       input.maxLength = 200;
@@ -186,6 +187,8 @@ function select(endpoint) {
         field.type === 'date' ? 'YYYY-MM-DD' : (field.example ?? '');
     }
     input.value = drafts.get(endpoint.id)?.[field.name] ?? field.example ?? '';
+    if (field.description)
+      wrapper.append(element('small', 'muted', field.description));
     input.oninput = () => {
       updateForecastDates();
       saveDraft();

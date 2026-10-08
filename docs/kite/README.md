@@ -1,8 +1,9 @@
 # Kite Integration API
 
-Read-only starter service. HOLD is enforced in code, not an environment toggle.
-There is no order placement, modification, cancellation, position conversion or
-forecast execution path. Existing orders/trades can be read without changing them.
+HOLD is enforced in code, not an environment toggle. Account endpoints are
+read-only. An authenticated `POST /api/kite/preview` can create a forecast-gated
+NSE CNC limit-order preview, but cannot place, modify, cancel or convert an
+order. Existing orders/trades can be read without changing them.
 
 ## Local Setup
 
@@ -29,6 +30,7 @@ forecast execution path. Existing orders/trades can be read without changing the
    is intentionally not persisted across reloads), then execute
    `GET /api/kite/connection` using **Try it out** and **Execute**.
    Success returns the Kite profile. Other account reads work the same way.
+   The preview endpoint accepts a JSON body and never submits an order.
 
 The entry point explicitly loads `.env.kite`; `KITE_ENV_FILE` can override its
 path. Deployment environment variables take
@@ -50,6 +52,8 @@ credential-free documentation assets/specification are unauthenticated; docs
 still enforce the configured host and browser origin. The callback accepts no
 bearer header; instead it requires single-use login state plus the browser's
 HttpOnly SameSite=Lax cookie. HTTPS deployments use host-only Secure cookies.
+`POST /api/kite/preview` requires the service bearer token and JSON. It is the
+only supported POST route; every broker write request remains rejected.
 
 | Path | Result |
 | --- | --- |
@@ -64,10 +68,30 @@ HttpOnly SameSite=Lax cookie. HTTPS deployments use host-only Secure cookies.
 | `/api/kite/positions` | Day/net positions |
 | `/api/kite/orders` | Today's existing orders |
 | `/api/kite/trades` | Today's existing executed trades |
+| `POST /api/kite/preview` | Forecast-gated CNC limit-order preview only |
+
+The preview requires symbol, `BUY`/`SELL`, positive whole-share quantity and a
+positive limit price; horizon is optionally `next_day` or `week`. It requests
+the explicit technical-indicator NSE forecast internally. It is blocked unless
+the forecast signal and direction match the requested side, the model beats
+the no-change baseline, the backtest has at least 30 samples and 55% directional
+accuracy, the forecast is under 15 minutes old, the last close is at most 10
+calendar days old, and the context risk flag is explicitly clear. Estimated
+notional cannot exceed INR 10,000. An eligible response contains
+`previewOnly: true`, `mode: HOLD` and `tradingEnabled: false`; it does not
+submit anything to Kite. A blocked preview returns HTTP 422 with the failed
+safety checks and forecast diagnostics, including signal, estimated direction,
+projected value, close date, forecast age, risk flag, and measured backtest
+metrics such as samples, directional accuracy and model-vs-naive errors.
+Available holdings, price tick-size, liquidity and intraday
+conditions are not yet validated.
 
 Missing/invalid service authentication returns 401. Broker authentication or
 permission failures return 424; rate limits return 429; other broker failures
-return sanitized 502 errors. Writes return 405. Account responses are not cached.
+return sanitized 502 errors. Broker writes and unsupported methods return 405.
+Blocked previews return 422; malformed preview bodies return 400; unsupported
+body types return 415 and oversized bodies return 413. Account responses are
+not cached.
 Login configuration errors return 409; invalid, expired or replayed callbacks
 return 400. The callback exchanges the request token using the official checksum
 and checks the returned API key and client ID before installing the access token.

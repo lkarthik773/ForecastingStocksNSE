@@ -44,13 +44,23 @@ separate and are not included in the published library.
 | NSE/BSE/forecast explorer | `npm start` or `npm run explorer` |
 | Kite Swagger service | `npm run start:kite` |
 | Forecast verification | `npm run test:forecast` |
+| Forecast OHLC feature experiment | `npm run forecast:feature-ablation` |
+| Export OHLC experiment results | `npm run forecast:feature-ablation:export` |
+| Forecast market-context experiment | `npm run forecast:market-context-ablation` |
+| Export market-context results | `npm run forecast:market-context-ablation:export` |
+| Forecast advanced technical experiment | `npm run forecast:advanced-technical-ablation` |
+| Export advanced technical results | `npm run forecast:advanced-technical-ablation:export` |
+| Audit historical forecast volume | `npm run forecast:volume-audit` |
+| Forecast volume feature experiment | `npm run forecast:volume-ablation` |
+| Export volume experiment results | `npm run forecast:volume-ablation:export` |
 | Kite verification | `npm run test:kite` and `npm run typecheck:kite` |
 | Library builds | `npm run build` |
 | LightGBM setup | `npm run setup:lightgbm` |
 
 See [development context](docs/development/CONTEXT.md),
 [Kite setup](docs/kite/README.md), [Kite context](docs/kite/CONTEXT.md),
-and the [environment template](config/examples/.env.kite.example).
+the [historical data guide](docs/HISTORICAL_DATA_GUIDE.md), and the
+[environment template](config/examples/.env.kite.example).
 
 ## Features
 
@@ -200,10 +210,15 @@ also requires its optional runtime and a configured local news archive.
 
 ### Stock Forecast (Experimental, NSE)
 
-The forecast API fetches the previous three calendar years of NSE equity daily
+The forecast API fetches the previous five calendar years of NSE equity daily
 closes, sorts and validates them, and estimates the next trading session
 (`next_day`, the default) or the next five trading sessions (`week`). A week
 is not seven calendar days or a prediction through a specific weekday.
+Set optional `historyMonths` from 36 to 120 to select a different historical
+lookback; it defaults to 60 months. This changes available history for
+walk-forward evaluation and residual calibration, but the rolling LightGBM
+training/test/advance windows remain 14/3/6 calendar months, and the final
+forecast model still trains on the latest 14 months.
 
 Choose `custom` to forecast an inclusive start/end date range of at most seven
 calendar days. In the explorer, selecting Custom reveals the required
@@ -214,12 +229,14 @@ calendar days. In the explorer, selecting Custom reveals the required
   "symbol": "TCS",
   "horizon": "custom",
   "start_date": "2026-10-05",
-  "end_date": "2026-10-11"
+  "end_date": "2026-10-11",
+  "historyMonths": 60
 }
 ```
 
-For a custom range, the three-year history window starts three calendar years
-before `start_date` and ends the day before `start_date`. Prices on or after
+For a custom range, the selected `historyMonths` window starts that many
+calendar months before `start_date` and ends the day before `start_date`.
+Prices on or after
 the start date are excluded, including for historical ranges. The response
 includes `forecastRange` and a `date` for each forecast weekday within the
 range. Weekends are skipped; exchange holidays are not modeled, so dates and
@@ -261,6 +278,29 @@ The response wraps the forecast in `data`, with `durationMs` alongside it:
 - `forecast`: estimated INR closes, changes, and approximate 95% prediction
   ranges for each future trading-session number.
 - `history`: requested dates, actual data coverage, and observation count.
+- `history.dataQuality`: raw/duplicate/invalid/out-of-range/non-EQ row counts,
+  OHLC availability, calendar intervals over four days, large daily close
+  changes, and intraday reversal candles. A reversal is flagged when the day's
+  high-low range is at least 10% of its opening price and the absolute
+  open-close body is at most 50% of that range. Flagged sessions remain in their
+  original sequence, but training and evaluation samples are excluded if the
+  candle falls in their 60-session feature lookback or forecast target window.
+  A flagged latest close
+  blocks forecast generation. Long calendar intervals may include NSE holidays;
+  they are not automatically classified as missing sessions. The `NSEClient`
+  forecast path fetches equity corporate actions and back-adjusts pre-ex-date
+  OHLC closes for recognized bonus and face-value split factors. Results report
+  `corporateActionAdjustment: "applied"` and the parsed events under
+  `corporateActionAdjustments`. Dividends and other non-share-count actions are
+  not adjusted. If the configured action provider fails or a split/bonus ratio
+  cannot be parsed, the forecast fails explicitly rather than falling back to
+  nominal prices. A directly constructed `ForecastApi` without an action
+  provider reports `"not applied by forecast"`.
+- Walk-forward fold metadata reports `qualityExcludedTrainRows` and
+  `qualityExcludedTestRows`; `backtest.qualityExcludedSamples` reports excluded
+  outcomes, and `backtest.unscoredEligibleSamples` reports eligible rows in
+  folds skipped for insufficient sample counts. These counts make the
+  effective sample sizes auditable.
 - `backtest`: rolling test-block error versus the no-change baseline,
   historical directional accuracy, and historical interval coverage.
 - `warnings`: model assumptions and limitations.
@@ -272,8 +312,8 @@ with the rolling schedule below. The library's explicit `baseline` comparison
 model remains available and is the default if `model` is omitted from a direct
 library/API call. Technical features are computed causally from known closes.
 
-At least 600 valid daily closes and coverage near the start of the three-year
-window are required. History more than ten calendar days old is rejected.
+At least 600 valid daily closes and coverage near the start of the selected
+history window are required. History more than ten calendar days old is rejected.
 Newly listed stocks, sparse histories, conflicting rows, or upstream failures
 produce errors instead of invented forecasts. Invalid parameters return HTTP
 400; exchange/data failures return 502. The existing explorer request lock
@@ -281,11 +321,12 @@ applies to forecasts too.
 
 **This is an experimental baseline, not investment advice or a reliable
 trading signal.** Historical directional accuracy is not the probability that
-the next prediction is correct. Daily closes may be unadjusted for splits,
-bonuses, and dividends; large discontinuities suppress the signal. Fundamentals,
-intraday prices, and exchange holiday dates are not modeled. News sentiment is
-used only as a risk overlay, not as a calibrated prediction of stock returns.
-BSE forecasting is not currently supported.
+the next prediction is correct. The configured NSE client adjusts recognized
+split and bonus actions; dividends are not adjusted, and unexplained large
+discontinuities suppress the signal. Fundamentals, intraday prices, and
+exchange holiday dates are not modeled. News sentiment is used only as a risk
+overlay, not as a calibrated prediction of stock returns. BSE forecasting is
+not currently supported.
 
 #### LightGBM Rolling Train/Test
 
@@ -299,7 +340,8 @@ token or hosted news service is required.
 
 The schedule uses **calendar months**, not a random train/test split:
 
-1. Fetch three years of actual historical closes from NSE.
+1. Fetch the selected amount of actual historical closes from NSE (60 months
+   by default, configurable through `historyMonths` from 36 to 120).
 2. Train on the first 14 months using 12 close-derived features: one-, five-,
   10-, and 20-session log returns; SMA20/50 and EMA12/26 ratios; RSI14; MACD
   histogram; Bollinger %B and bandwidth; and 20-session volatility. OHLCV-based
@@ -313,19 +355,23 @@ The schedule uses **calendar months**, not a random train/test split:
 5. Refit on the latest 14 months of available actual data for the requested
    next-session/week/custom-range forecast.
 
-For a history starting 2023-10-05, the four complete folds are:
+For a history starting 2021-10-05 with the default six-month advance, eight
+complete folds fit; only the first four are shown here:
 
 | Fold | Train Start | Train End / Test Start | Test End |
 | --- | --- | --- | --- |
-| 1 | 2023-10-05 | 2024-12-05 | 2025-03-05 |
-| 2 | 2024-04-05 | 2025-06-05 | 2025-09-05 |
-| 3 | 2024-10-05 | 2025-12-05 | 2026-03-05 |
-| 4 | 2025-04-05 | 2026-06-05 | 2026-09-05 |
+| 1 | 2021-10-05 | 2022-12-05 | 2023-03-05 |
+| 2 | 2022-04-05 | 2023-06-05 | 2023-09-05 |
+| 3 | 2022-10-05 | 2023-12-05 | 2024-03-05 |
+| 4 | 2023-04-05 | 2024-06-05 | 2024-09-05 |
 
 End boundaries are exclusive. Advancing six months with a three-month test
 window leaves three-month gaps between scored blocks. Those actual prices
 can enter later training windows but aren't represented as test results.
 This is a fixed 14-month **rolling** window, not an expanding window.
+The five-year history increases the number of scored folds and the pool of
+past residuals; it does not make the final fitted model use five years of
+training rows.
 
 Earlier forecasts and their realized outcomes are retained in
 `model.training.outOfSampleForecasts`. **Predicted prices are not treated as
@@ -381,9 +427,10 @@ through its documented [ONNX conversion](https://huggingface.co/Xenova/finbert)
 and optional Transformers.js runtime. Model weights download only on first
 explicit FinBERT use, to `node_modules/.cache/finbert`. Scores classify English
 financial sentiment, not stock-movement probabilities. Archived text revisions,
-publication-time errors, unadjusted corporate actions and temporal dependence
-remain risks. News-feature backtests do not include the extra latest-news risk
-overlay. Technical-only training does not require any news archive.
+publication-time errors, unadjusted dividends/non-share-count actions and
+temporal dependence remain risks. News-feature backtests do not include the
+extra latest-news risk overlay. Technical-only training does not require any
+news archive.
 
 Run the offline model and HTTP tests with `npm run test:forecast`.
 
@@ -508,4 +555,3 @@ remain under MIT; those grants are not withdrawn. Original contributions owned
 by the GitHub account `lkarthik773` and first published after 2026-10-05 are All
 Rights Reserved. Upstream and third-party material remains under its applicable
 license. See [LICENSE](LICENSE) for details.
-
